@@ -1,0 +1,88 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "copilotscan"
+version = "0.1.0"
+description = "Audit Microsoft 365 Copilot agents via the Microsoft Graph API"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+keywords = ["microsoft365", "copilot", "graph-api", "security", "audit", "msal", "purview"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: System Administrators",
+    "Intended Audience :: Information Technology",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security",
+    "Topic :: System :: Systems Administration",
+]
+dependencies = [
+    "msal>=1.28.0",
+    "requests>=2.31.0",
+    "pyyaml>=6.0",
+    "click>=8.1.0",
+    "jinja2>=3.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "pytest-mock>=3.14",
+    "black>=24.0",
+    "ruff>=0.4.0",
+    "mypy>=1.10",
+    "types-requests",
+    "types-PyYAML",
+]
+
+[project.scripts]
+copilotscan = "copilotscan.__main__:cli"
+
+[project.urls]
+Homepage = "https://github.com/YOUR_ORG/copilotscan"
+Documentation = "https://github.com/YOUR_ORG/copilotscan/tree/main/docs"
+Issues = "https://github.com/YOUR_ORG/copilotscan/issues"
+Changelog = "https://github.com/YOUR_ORG/copilotscan/releases"
+
+# -----------------------------------------------------------------------------
+# Tool configuration
+# -----------------------------------------------------------------------------
+
+[tool.black]
+line-length = 100
+target-version = ["py310", "py311", "py312"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+ignore_missing_imports = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+markers = [
+    "integration: live Microsoft Graph API tests (requires real M365 credentials)",
+]
+
+[tool.coverage.run]
+source = ["src/copilotscan"]
+omit = ["tests/*"]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
