@@ -66,12 +66,10 @@ GRAPH_BASE_URL: str = "https://graph.microsoft.com"
 AUTHORITY_BASE: str = "https://login.microsoftonline.com"
 
 # Scopes DÉLÉGUÉS pour Device Code Flow (agit au nom de l'admin connecté).
-# Principe du moindre privilège : seuls les droits nécessaires à l'audit Copilot.
+# .default request all static delegated permissions pre-consented on the App Registration.
+# Ensure admin consent has been granted in Azure Portal before running.
 DELEGATED_SCOPES: list[str] = [
-    "https://graph.microsoft.com/Reports.Read.All",
-    "https://graph.microsoft.com/AuditLog.Read.All",
-    "https://graph.microsoft.com/Directory.Read.All",
-    "https://graph.microsoft.com/User.Read.All",
+    "https://graph.microsoft.com/.default",
 ]
 
 # Scopes APPLICATION pour Client Credentials (app-secret / app-cert).

@@ -326,7 +326,7 @@
 <!-- ════════════════════════════════════════════════════════════════ -->
 <script>
 /* ── Agent data (injected by Jinja2) ── */
-const AGENTS = {{ agents_json }};
+const AGENTS = {{ agents | tojson }};
 
 /* ──────────────────────────────────────
    Chart.js — Scope Doughnut

@@ -19,7 +19,6 @@ Usage
 
 from __future__ import annotations
 
-import json
 import logging
 from collections import Counter
 from datetime import datetime, timezone
@@ -119,7 +118,6 @@ class ReportGenerator:
             version=self.version,
             stats=stats,
             agents=agents_data,
-            agents_json=json.dumps(agents_data, ensure_ascii=False),
             risk_colors=RISK_BADGE_COLOR,
             origin_colors=ORIGIN_BADGE_COLOR,
             ds_colors=DATA_SOURCE_BADGE_COLOR,

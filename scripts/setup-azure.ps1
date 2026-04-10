@@ -122,7 +122,7 @@ else {
 
     $App = New-MgApplication -DisplayName $AppName `
         -SignInAudience "AzureADMyOrg" `
-        -IsFallbackPublicClient $true `
+        -IsFallbackPublicClient:$true `
         -PublicClient @{ RedirectUris = @("https://login.microsoftonline.com/common/oauth2/nativeclient") } `
         -RequiredResourceAccess $RequiredResourceAccess
 

@@ -78,8 +78,112 @@ class GraphCollector:
     # Public API
     # ------------------------------------------------------------------
 
+    def preflight(self) -> None:
+        """
+        Run lightweight diagnostic calls before the main collection.
+
+        Checks:
+          1. Token works at all  (GET /v1.0/me)
+          2. Signed-in user's directory roles  (GET /v1.0/me/transitiveMemberOf)
+          3. Tenant service plan includes Copilot  (GET /v1.0/subscribedSkus)
+
+        Raises a descriptive RuntimeError if a clear problem is found;
+        logs warnings for non-blocking issues.
+        """
+        # ── 1. Basic token check ──────────────────────────────────────
+        me_resp = self._session.get(
+            "https://graph.microsoft.com/v1.0/me",
+            headers={"Authorization": self._auth_header, "Accept": "application/json"},
+            timeout=15,
+        )
+        if me_resp.status_code == 401:
+            raise RuntimeError("Preflight: token is invalid or expired (HTTP 401 on /v1.0/me).")
+        if not me_resp.ok:
+            logger.warning("Preflight: /v1.0/me returned %d – continuing anyway.", me_resp.status_code)
+        else:
+            me = me_resp.json()
+            logger.info("Preflight: signed in as %s (%s)", me.get("displayName"), me.get("userPrincipalName"))
+
+        # ── 2. Role check ─────────────────────────────────────────────
+        roles_resp = self._session.get(
+            "https://graph.microsoft.com/v1.0/me/transitiveMemberOf?$select=displayName,roleTemplateId",
+            headers={"Authorization": self._auth_header, "Accept": "application/json"},
+            timeout=15,
+        )
+        REQUIRED_ROLE_IDS = {
+            "62e90394-69f5-4237-9190-012177145e10",  # Global Administrator
+            "892c5842-a9a6-463a-8041-72aa08ca3cf6",  # Copilot Administrator (preview)
+        }
+        has_required_role = False
+        if roles_resp.ok:
+            memberships = roles_resp.json().get("value", [])
+            role_names = [m.get("displayName", "") for m in memberships]
+            role_ids = {m.get("roleTemplateId", "") for m in memberships}
+            logger.info("Preflight: user roles/groups: %s", role_names)
+            has_required_role = bool(REQUIRED_ROLE_IDS & role_ids)
+            if not has_required_role:
+                logger.warning(
+                    "Preflight: signed-in account does not appear to hold "
+                    "Global Administrator or Copilot Administrator role. "
+                    "Roles found: %s", role_names or ["(none)"]
+                )
+        else:
+            logger.warning("Preflight: could not retrieve roles (HTTP %d).", roles_resp.status_code)
+
+        # ── 3. Licence check ──────────────────────────────────────────
+        # SKU part numbers that include the Copilot admin catalog feature
+        COPILOT_SKU_PARTS = {
+            "microsoft_365_copilot",
+            "m365_copilot",
+            "copilot_for_microsoft_365",
+            "copilot",
+        }
+        skus_resp = self._session.get(
+            "https://graph.microsoft.com/v1.0/subscribedSkus?$select=skuPartNumber,capabilityStatus",
+            headers={"Authorization": self._auth_header, "Accept": "application/json"},
+            timeout=15,
+        )
+        has_copilot_sku = False
+        if skus_resp.ok:
+            skus = skus_resp.json().get("value", [])
+            enabled_skus = [s["skuPartNumber"] for s in skus if s.get("capabilityStatus") == "Enabled"]
+            logger.info("Preflight: enabled tenant SKUs: %s", enabled_skus)
+            has_copilot_sku = any(
+                any(kw in sku.lower() for kw in COPILOT_SKU_PARTS)
+                for sku in enabled_skus
+            )
+            if not has_copilot_sku:
+                logger.warning(
+                    "Preflight: no Microsoft 365 Copilot SKU found among enabled licences. "
+                    "The /beta/copilot/admin/catalog/packages endpoint requires a "
+                    "Microsoft 365 Copilot licence on the tenant."
+                )
+        else:
+            logger.warning("Preflight: could not retrieve SKUs (HTTP %d).", skus_resp.status_code)
+
+        # ── Summary ───────────────────────────────────────────────────
+        if not has_required_role or not has_copilot_sku:
+            problems = []
+            if not has_copilot_sku:
+                problems.append(
+                    "  • No Microsoft 365 Copilot licence detected on this tenant.\n"
+                    "    The catalog API is only available to tenants with an M365 Copilot subscription."
+                )
+            if not has_required_role:
+                problems.append(
+                    "  • The signed-in account lacks the Global Administrator or\n"
+                    "    Copilot Administrator role required to read the agent catalog."
+                )
+            raise RuntimeError(
+                "Preflight checks failed — the Graph catalog endpoint will return 403.\n"
+                + "\n".join(problems)
+            )
+
+        logger.info("Preflight: all checks passed.")
+
     def collect(self) -> list[Agent]:
-        """Fetch *all* agents, handling pagination automatically."""
+        """Run preflight checks then fetch *all* agents, handling pagination automatically."""
+        self.preflight()
         agents: list[Agent] = []
         for page in self._paginate():
             for item in page:
@@ -152,10 +256,24 @@ class GraphCollector:
 
             # ── Auth / feature errors ─────────────────────────────────
             if resp.status_code == 403:
+                try:
+                    err_body = resp.json()
+                    err_detail = err_body.get("error", {})
+                    err_code = err_detail.get("code", "")
+                    err_msg = err_detail.get("message", "")
+                    detail = f"code={err_code!r} message={err_msg!r}"
+                except Exception:
+                    detail = resp.text[:500]
                 raise FeatureFlagError(
-                    "HTTP 403 – the tenant may not have the Copilot admin catalog "
-                    "feature enabled, or the token lacks required scopes. "
-                    f"URL: {url}"
+                    f"HTTP 403 from Microsoft Graph.\n"
+                    f"  URL    : {url}\n"
+                    f"  Detail : {detail}\n"
+                    f"  Possible causes:\n"
+                    f"    • Admin consent not yet granted for CopilotPackages.Read.All\n"
+                    f"    • Tenant does not have a Microsoft 365 Copilot licence\n"
+                    f"    • The /beta/copilot/admin/catalog/packages endpoint is not\n"
+                    f"      enabled for this tenant (requires M365 Copilot or Copilot+)\n"
+                    f"    • The signed-in user is not a Global Admin / Copilot Admin"
                 )
             if resp.status_code == 424:
                 raise DelegatedAuthRequired(
