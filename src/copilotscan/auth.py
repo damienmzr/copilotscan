@@ -43,7 +43,6 @@ import time
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Optional
 
 import msal
 import yaml
@@ -116,10 +115,10 @@ class AuthConfig:
 
     client_id: str
     tenant_id: str
-    client_secret: Optional[str] = None
-    cert_path: Optional[Path] = None
-    cert_thumbprint: Optional[str] = None
-    cache_file: Optional[Path] = None
+    client_secret: str | None = None
+    cert_path: Path | None = None
+    cert_thumbprint: str | None = None
+    cache_file: Path | None = None
     auth_mode: AuthMode = AuthMode.DEVICE_CODE
     extra_scopes: list[str] = field(default_factory=list)
 
@@ -131,11 +130,7 @@ class AuthConfig:
     @property
     def scopes(self) -> list[str]:
         """Retourne les scopes adaptés au mode d'authentification."""
-        base = (
-            DELEGATED_SCOPES
-            if self.auth_mode == AuthMode.DEVICE_CODE
-            else APPLICATION_SCOPES
-        )
+        base = DELEGATED_SCOPES if self.auth_mode == AuthMode.DEVICE_CODE else APPLICATION_SCOPES
         return base + self.extra_scopes
 
 
@@ -200,7 +195,7 @@ class TokenExpiredError(AuthError):
 
 
 def load_config(
-    config_path: Optional[Path] = None,
+    config_path: Path | None = None,
     auth_mode: AuthMode = AuthMode.DEVICE_CODE,
 ) -> AuthConfig:
     """
@@ -258,7 +253,7 @@ def load_config(
         )
 
     # Résolution du certificat
-    cert_path: Optional[Path] = None
+    cert_path: Path | None = None
     raw_cert = raw.get("cert_path")
     if raw_cert:
         cert_path = Path(raw_cert).expanduser().resolve()
@@ -266,7 +261,7 @@ def load_config(
             raise AuthConfigError(f"Certificat introuvable : {cert_path}")
 
     # Résolution du cache
-    cache_file: Optional[Path] = None
+    cache_file: Path | None = None
     raw_cache = raw.get("cache_file")
     if raw_cache:
         cache_file = Path(raw_cache).expanduser().resolve()
@@ -313,7 +308,7 @@ def _validate_config_for_mode(config: AuthConfig) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _build_token_cache(cache_file: Optional[Path]) -> msal.SerializableTokenCache:
+def _build_token_cache(cache_file: Path | None) -> msal.SerializableTokenCache:
     """
     Crée un cache de tokens MSAL, persisté sur disque si cache_file est fourni.
 
@@ -334,7 +329,7 @@ def _build_token_cache(cache_file: Optional[Path]) -> msal.SerializableTokenCach
 
 def _persist_token_cache(
     cache: msal.SerializableTokenCache,
-    cache_file: Optional[Path],
+    cache_file: Path | None,
 ) -> None:
     """
     Persiste le cache de tokens sur disque si nécessaire.
@@ -379,8 +374,8 @@ class CopilotScanAuthenticator:
         """
         self._config = config
         self._cache = _build_token_cache(config.cache_file)
-        self._app: Optional[msal.ClientApplication] = None
-        self._current_token: Optional[TokenResult] = None
+        self._app: msal.ClientApplication | None = None
+        self._current_token: TokenResult | None = None
 
     def _get_app(self) -> msal.ClientApplication:
         """
@@ -473,7 +468,9 @@ class CopilotScanAuthenticator:
         print("\n" + "=" * 60)
         print("  AUTHENTIFICATION REQUISE")
         print("=" * 60)
-        print(f"\n  1. Ouvrez : {flow.get('verification_uri', 'https://microsoft.com/devicelogin')}")
+        print(
+            f"\n  1. Ouvrez : {flow.get('verification_uri', 'https://microsoft.com/devicelogin')}"
+        )
         print(f"  2. Entrez le code : {flow['user_code']}")
         print(f"\n  Expiration dans {DEVICE_CODE_TIMEOUT // 60} minutes.")
         print("=" * 60 + "\n")
@@ -525,8 +522,10 @@ class CopilotScanAuthenticator:
         """
         # Retourner le token en mémoire s'il est encore valide
         if self._current_token and not self._current_token.is_expired:
-            logger.debug("Token valide en mémoire (expires dans %.0fs).",
-                         self._current_token.expires_at - time.time())
+            logger.debug(
+                "Token valide en mémoire (expires dans %.0fs).",
+                self._current_token.expires_at - time.time(),
+            )
             return self._current_token
 
         logger.info("Acquisition d'un nouveau token (mode: %s)...", self._config.auth_mode.value)
@@ -579,9 +578,7 @@ class CopilotScanAuthenticator:
             if token.is_expired:
                 token = self.refresh_token()
         except AuthFlowError as exc:
-            raise TokenExpiredError(
-                "Impossible de renouveler le token d'accès."
-            ) from exc
+            raise TokenExpiredError("Impossible de renouveler le token d'accès.") from exc
 
         return {"Authorization": token.authorization_header}
 
@@ -629,14 +626,15 @@ class CopilotScanAuthenticator:
 
             logger.error(
                 "[%s] Échec d'authentification : %s — %s (correlation_id: %s)",
-                flow_name, error, description, correlation_id,
+                flow_name,
+                error,
+                description,
+                correlation_id,
             )
 
             # Messages d'erreur spécifiques et actionnables
             user_hint = _get_error_hint(error, description)
-            raise AuthFlowError(
-                f"[{flow_name}] {error}: {description}\n💡 {user_hint}"
-            )
+            raise AuthFlowError(f"[{flow_name}] {error}: {description}\n💡 {user_hint}")
 
         return CopilotScanAuthenticator._parse_token_result(result)
 
@@ -681,7 +679,9 @@ def _get_error_hint(error: str, description: str) -> str:
         if code.startswith("AADSTS") and code in description:
             return hint
 
-    return "Consultez https://learn.microsoft.com/azure/active-directory/develop/reference-error-codes"
+    return (
+        "Consultez https://learn.microsoft.com/azure/active-directory/develop/reference-error-codes"
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -24,9 +24,15 @@ from copilotscan import __version__
     type=click.Choice(["device_code", "client_credentials"]),
     help="Authentication flow.",
 )
-@click.option("--no-purview", is_flag=True, default=False, help="Skip Purview audit log collection.")
-@click.option("--inactivity-days", default=90, show_default=True, help="Inactivity threshold in days.")
-@click.option("--timeout-minutes", default=30, show_default=True, help="Purview polling timeout in minutes.")
+@click.option(
+    "--no-purview", is_flag=True, default=False, help="Skip Purview audit log collection."
+)
+@click.option(
+    "--inactivity-days", default=90, show_default=True, help="Inactivity threshold in days."
+)
+@click.option(
+    "--timeout-minutes", default=30, show_default=True, help="Purview polling timeout in minutes."
+)
 @click.option("--verbose", is_flag=True, default=False, help="Enable debug logging.")
 @click.version_option(__version__, prog_name="copilotscan")
 def cli(

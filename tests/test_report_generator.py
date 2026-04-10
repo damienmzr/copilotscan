@@ -37,6 +37,7 @@ NOW = datetime(2026, 4, 10, 12, 0, 0, tzinfo=UTC)
 # Factory — mirrors _make_agent in test_risk_engine.py
 # ---------------------------------------------------------------------------
 
+
 def _agent(
     id: str,
     name: str,
@@ -60,8 +61,7 @@ def _agent(
         version="1.0",
         last_modified_datetime=datetime(2026, 1, 1, tzinfo=UTC),
         purview_last_interaction=(
-            NOW - timedelta(days=days_since_activity)
-            if days_since_activity is not None else None
+            NOW - timedelta(days=days_since_activity) if days_since_activity is not None else None
         ),
         purview_top_knowledge_sources=knowledge_sources or [],
     )
@@ -70,6 +70,7 @@ def _agent(
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture()
 def sample_agents() -> list[Agent]:
@@ -83,31 +84,36 @@ def sample_agents() -> list[Agent]:
     """
     agents = [
         _agent(
-            "a1", "HR Assistant",
+            "a1",
+            "HR Assistant",
             available_to=[{"type": "Organization"}],
             publisher={"displayName": "Contoso IT", "publisherType": "Organization"},
             days_since_activity=10,
             knowledge_sources=["https://contoso.sharepoint.com/sites/hr"],
         ),
         _agent(
-            "a2", "Orphan Bot",
+            "a2",
+            "Orphan Bot",
             available_to=[{"type": "Organization"}],
             publisher=None,
             days_since_activity=200,
         ),
         _agent(
-            "a3", "External Assist",
+            "a3",
+            "External Assist",
             available_to=[{"type": "User"}],
             publisher={"displayName": "Some User", "publisherType": "User"},
             days_since_activity=5,
             knowledge_sources=["https://contoso.sharepoint.com/sites/everyone"],
         ),
         _agent(
-            "a4", "MS Search",
+            "a4",
+            "MS Search",
             publisher={"displayName": "Microsoft", "publisherType": "Microsoft"},
         ),
         _agent(
-            "a5", "SP Agent",
+            "a5",
+            "SP Agent",
             element_types=["SharePointAgent"],
             publisher={"displayName": "Auto", "publisherType": "Organization"},
             is_blocked=True,
@@ -129,6 +135,7 @@ def generator(sample_agents: list[Agent]) -> ReportGenerator:
 # ---------------------------------------------------------------------------
 # _compute_stats()
 # ---------------------------------------------------------------------------
+
 
 class TestComputeStats:
     def test_total_agents(self, generator: ReportGenerator) -> None:
@@ -167,12 +174,25 @@ class TestComputeStats:
 # _serialize_agent()
 # ---------------------------------------------------------------------------
 
+
 class TestSerializeAgent:
     REQUIRED_FIELDS = [
-        "id", "display_name", "agent_type", "element_types",
-        "is_blocked", "is_org_scoped", "publisher", "version",
-        "last_modified", "last_interaction", "origin", "origin_color",
-        "worst_level", "worst_color", "flags", "knowledge_sources",
+        "id",
+        "display_name",
+        "agent_type",
+        "element_types",
+        "is_blocked",
+        "is_org_scoped",
+        "publisher",
+        "version",
+        "last_modified",
+        "last_interaction",
+        "origin",
+        "origin_color",
+        "worst_level",
+        "worst_color",
+        "flags",
+        "knowledge_sources",
     ]
 
     def _get_agent(self, generator: ReportGenerator, agent_id: str) -> dict:
@@ -208,7 +228,15 @@ class TestSerializeAgent:
         data = self._get_agent(generator, "a2")
         assert len(data["flags"]) > 0
         for flag in data["flags"]:
-            for key in ("rule_id", "level", "message_en", "message_fr", "data_source", "color", "ds_color"):
+            for key in (
+                "rule_id",
+                "level",
+                "message_en",
+                "message_fr",
+                "data_source",
+                "color",
+                "ds_color",
+            ):
                 assert key in flag, f"Flag missing key: {key}"
 
     def test_flag_color_matches_risk_badge_map(self, generator: ReportGenerator) -> None:
@@ -242,6 +270,7 @@ class TestSerializeAgent:
 # generate()
 # ---------------------------------------------------------------------------
 
+
 class TestGenerate:
     def test_file_is_created(self, generator: ReportGenerator, tmp_path: Path) -> None:
         out = tmp_path / "report.html"
@@ -251,7 +280,7 @@ class TestGenerate:
     def test_file_is_non_empty(self, generator: ReportGenerator, tmp_path: Path) -> None:
         out = tmp_path / "report.html"
         generator.generate(str(out))
-        assert out.stat().st_size > 1000   # at minimum several KB
+        assert out.stat().st_size > 1000  # at minimum several KB
 
     def test_tenant_name_in_output(self, generator: ReportGenerator, tmp_path: Path) -> None:
         out = tmp_path / "report.html"
@@ -272,7 +301,9 @@ class TestGenerate:
         for agent in generator.agents:
             assert agent.display_name in html, f"Agent '{agent.display_name}' not found in HTML"
 
-    def test_no_jinja2_placeholders_remain(self, generator: ReportGenerator, tmp_path: Path) -> None:
+    def test_no_jinja2_placeholders_remain(
+        self, generator: ReportGenerator, tmp_path: Path
+    ) -> None:
         """Verify Jinja2 rendered all variables — no {{ }} left in output."""
         out = tmp_path / "report.html"
         generator.generate(str(out))

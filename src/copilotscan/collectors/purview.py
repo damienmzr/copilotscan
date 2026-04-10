@@ -14,7 +14,6 @@ from __future__ import annotations
 import logging
 import time
 from datetime import datetime, timezone
-from typing import Optional
 
 import requests
 
@@ -56,10 +55,10 @@ class PurviewCollector:
     def __init__(
         self,
         authorization_header: str,
-        session: Optional[requests.Session] = None,
+        session: requests.Session | None = None,
         poll_timeout_minutes: int = 30,
-        start_datetime: Optional[datetime] = None,
-        end_datetime: Optional[datetime] = None,
+        start_datetime: datetime | None = None,
+        end_datetime: datetime | None = None,
     ) -> None:
         """
         Args:
@@ -69,8 +68,8 @@ class PurviewCollector:
             start_datetime:        Audit window start (UTC). Defaults to 7 days ago.
             end_datetime:          Audit window end   (UTC). Defaults to now.
         """
-        self._auth_header     = authorization_header
-        self._session         = session or requests.Session()
+        self._auth_header = authorization_header
+        self._session = session or requests.Session()
         self._timeout_minutes = poll_timeout_minutes
 
         now = datetime.now(timezone.utc)
@@ -95,9 +94,7 @@ class PurviewCollector:
         logger.info("PurviewCollector: query %s completed; fetching records", query_id)
 
         purview_map = self._aggregate_records(query_id)
-        logger.info(
-            "PurviewCollector: aggregated data for %d agents", len(purview_map)
-        )
+        logger.info("PurviewCollector: aggregated data for %d agents", len(purview_map))
         return purview_map
 
     # ------------------------------------------------------------------
@@ -107,10 +104,10 @@ class PurviewCollector:
     def _submit_query(self) -> str:
         """POST the audit query and return the resulting query ID."""
         body = {
-            "displayName":         f"CopilotScan-{datetime.now(timezone.utc).isoformat()}",
+            "displayName": f"CopilotScan-{datetime.now(timezone.utc).isoformat()}",
             "filterStartDateTime": self._start_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "filterEndDateTime":   self._end_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
-            "recordTypeFilters":   self.RECORD_TYPE_FILTERS,
+            "filterEndDateTime": self._end_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "recordTypeFilters": self.RECORD_TYPE_FILTERS,
         }
 
         resp = self._session.post(
@@ -118,8 +115,8 @@ class PurviewCollector:
             json=body,
             headers={
                 "Authorization": self._auth_header,
-                "Content-Type":  "application/json",
-                "Accept":        "application/json",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
             },
             timeout=30,
         )
@@ -135,7 +132,7 @@ class PurviewCollector:
         Poll the query status every POLL_INTERVAL_S seconds until
         status is 'succeeded' or the timeout is reached.
         """
-        deadline   = time.monotonic() + self._timeout_minutes * 60
+        deadline = time.monotonic() + self._timeout_minutes * 60
         status_url = f"{self.AUDIT_QUERY_URL}/{query_id}"
 
         while True:
@@ -151,7 +148,7 @@ class PurviewCollector:
                 timeout=30,
             )
             resp.raise_for_status()
-            data   = resp.json()
+            data = resp.json()
             status = (data.get("status") or "").lower()
 
             logger.debug("PurviewCollector: query %s status = %s", query_id, status)
@@ -175,9 +172,7 @@ class PurviewCollector:
         Page through all audit records for the completed query and
         aggregate per-agent activity + knowledge-source hit counts.
         """
-        records_url: Optional[str] = (
-            f"{self.AUDIT_QUERY_URL}/{query_id}/records?$top=1000"
-        )
+        records_url: str | None = f"{self.AUDIT_QUERY_URL}/{query_id}/records?$top=1000"
         purview_map: dict[str, PurviewData] = {}
 
         while records_url:
@@ -209,14 +204,10 @@ class PurviewCollector:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _extract_agent_id(record: dict) -> Optional[str]:
+    def _extract_agent_id(record: dict) -> str | None:
         """
         Extract agent_id from an audit record.
         Microsoft uses different field names depending on record type.
         """
         audit_data = record.get("auditData") or {}
-        return (
-            audit_data.get("AgentId")
-            or audit_data.get("agentId")
-            or record.get("objectId")
-        )
+        return audit_data.get("AgentId") or audit_data.get("agentId") or record.get("objectId")

@@ -9,18 +9,14 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-import pytest
-
 from copilotscan.models import (
     Agent,
     AgentOrigin,
     KnowledgeSource,
-    PurviewData,
     RiskFlag,
     RiskLevel,
 )
 from copilotscan.risk_engine import classify_origin, evaluate
-
 
 # ---------------------------------------------------------------------------
 # Shared factory
@@ -43,7 +39,8 @@ def _make_agent(
         agent_type=kwargs.get("agent_type", "Custom"),
         is_blocked=kwargs.get("is_blocked", False),
         publisher=publisher
-        if publisher is not ... else {"displayName": "Contoso IT", "publisherType": "Organization"},
+        if publisher is not ...
+        else {"displayName": "Contoso IT", "publisherType": "Organization"},
         available_to=available_to if available_to is not None else [{"type": "Organization"}],
         deployed_to=kwargs.get("deployed_to", []),
         supported_hosts=kwargs.get("supported_hosts", ["Copilot"]),
@@ -161,9 +158,7 @@ class TestSensitiveKnowledgeRule:
     def test_does_not_fire_for_internal_source(self) -> None:
         agent = _make_agent(
             purview_last_interaction=datetime.now(timezone.utc) - timedelta(days=5),
-            purview_top_knowledge_sources=[
-                "https://contoso.sharepoint.com/sites/hr/documents"
-            ],
+            purview_top_knowledge_sources=["https://contoso.sharepoint.com/sites/hr/documents"],
         )
         flags = evaluate(agent)
         assert all(f.rule_id != "SENSITIVE_KNOWLEDGE" for f in flags)

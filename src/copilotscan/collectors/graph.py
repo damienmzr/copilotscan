@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Iterator, Optional
+from collections.abc import Iterator
 
 import requests
 
@@ -35,6 +35,7 @@ def _sleep(seconds: float, reason: str = "") -> None:
 # GraphCollector
 # ---------------------------------------------------------------------------
 
+
 class GraphCollector:
     """
     Fetches all Copilot agents from Microsoft Graph.
@@ -52,14 +53,14 @@ class GraphCollector:
       - HTTP 424 → DelegatedAuthRequired
     """
 
-    BASE_URL   = "https://graph.microsoft.com/beta/copilot/admin/catalog/packages"
-    MAX_RETRY  = 3
-    BACKOFF_BASE = 2.0   # seconds
+    BASE_URL = "https://graph.microsoft.com/beta/copilot/admin/catalog/packages"
+    MAX_RETRY = 3
+    BACKOFF_BASE = 2.0  # seconds
 
     def __init__(
         self,
         authorization_header: str,
-        session: Optional[requests.Session] = None,
+        session: requests.Session | None = None,
         page_size: int = 100,
     ) -> None:
         """
@@ -70,8 +71,8 @@ class GraphCollector:
             page_size:            OData $top value per page (max 100).
         """
         self._auth_header = authorization_header
-        self._session     = session or requests.Session()
-        self._page_size   = page_size
+        self._session = session or requests.Session()
+        self._page_size = page_size
 
     # ------------------------------------------------------------------
     # Public API
@@ -95,7 +96,7 @@ class GraphCollector:
 
     def _paginate(self) -> Iterator[list[dict]]:
         """Yield successive pages (lists of raw dicts) from the Graph endpoint."""
-        url: Optional[str] = f"{self.BASE_URL}?$top={self._page_size}"
+        url: str | None = f"{self.BASE_URL}?$top={self._page_size}"
         page_num = 0
 
         while url:
@@ -112,7 +113,7 @@ class GraphCollector:
           - Exponential backoff on transient errors (5xx / network)
           - Up to MAX_RETRY attempts
         """
-        last_exc: Optional[Exception] = None
+        last_exc: Exception | None = None
 
         for attempt in range(1, self.MAX_RETRY + 1):
             try:
@@ -120,17 +121,20 @@ class GraphCollector:
                     url,
                     headers={
                         "Authorization": self._auth_header,
-                        "Accept":        "application/json",
+                        "Accept": "application/json",
                         "ConsistencyLevel": "eventual",
                     },
                     timeout=30,
                 )
             except requests.RequestException as exc:
                 last_exc = exc
-                wait = self.BACKOFF_BASE ** attempt
+                wait = self.BACKOFF_BASE**attempt
                 logger.warning(
                     "GraphCollector: network error on attempt %d/%d – %s. Retrying in %.1f s",
-                    attempt, self.MAX_RETRY, exc, wait,
+                    attempt,
+                    self.MAX_RETRY,
+                    exc,
+                    wait,
                 )
                 _sleep(wait, "network error")
                 continue
@@ -162,10 +166,13 @@ class GraphCollector:
 
             # ── Server-side transient errors ──────────────────────────
             if resp.status_code >= 500:
-                wait = self.BACKOFF_BASE ** attempt
+                wait = self.BACKOFF_BASE**attempt
                 logger.warning(
                     "GraphCollector: server error %d on attempt %d/%d. Retrying in %.1f s",
-                    resp.status_code, attempt, self.MAX_RETRY, wait,
+                    resp.status_code,
+                    attempt,
+                    self.MAX_RETRY,
+                    wait,
                 )
                 _sleep(wait, f"HTTP {resp.status_code}")
                 last_exc = RuntimeError(f"HTTP {resp.status_code}")
@@ -177,6 +184,5 @@ class GraphCollector:
             return resp.json()
 
         raise RuntimeError(
-            f"GraphCollector: gave up after {self.MAX_RETRY} attempts. "
-            f"Last error: {last_exc}"
+            f"GraphCollector: gave up after {self.MAX_RETRY} attempts. Last error: {last_exc}"
         )

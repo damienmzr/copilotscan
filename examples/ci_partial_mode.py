@@ -25,7 +25,6 @@ import os
 import subprocess
 import sys
 
-
 REQUIRED_ENV_VARS = [
     "COPILOTSCAN_CLIENT_ID",
     "COPILOTSCAN_TENANT_ID",
@@ -41,10 +40,14 @@ def main() -> None:
 
     result = subprocess.run(
         [
-            sys.executable, "-m", "copilotscan",
-            "--flow", "client_credentials",
+            sys.executable,
+            "-m",
+            "copilotscan",
+            "--flow",
+            "client_credentials",
             "--no-purview",
-            "--output", "ci_report.html",
+            "--output",
+            "ci_report.html",
         ],
         check=False,
     )

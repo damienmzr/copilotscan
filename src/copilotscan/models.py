@@ -16,8 +16,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Optional
-
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # Type aliases
@@ -31,12 +30,13 @@ KnowledgeSource = str
 # AuditQueryStatus
 # ---------------------------------------------------------------------------
 
+
 class AuditQueryStatus(str, Enum):
     """Lifecycle states of a Purview /auditLog/queries job."""
 
-    RUNNING   = "running"
+    RUNNING = "running"
     SUCCEEDED = "succeeded"
-    FAILED    = "failed"
+    FAILED = "failed"
     CANCELLED = "cancelled"
 
 
@@ -44,44 +44,47 @@ class AuditQueryStatus(str, Enum):
 # AgentOrigin
 # ---------------------------------------------------------------------------
 
+
 class AgentOrigin(str, Enum):
     """How / where the agent was created — used by classify_origin() in risk_engine."""
 
-    SHAREPOINT_AGENT   = "sharepoint_agent"
+    SHAREPOINT_AGENT = "sharepoint_agent"
     MICROSOFT_PREBUILT = "microsoft_prebuilt"
-    PRO_CODE           = "pro_code"
-    AGENT_BUILDER      = "agent_builder"
-    COPILOT_STUDIO     = "copilot_studio"
-    UNKNOWN            = "unknown"
+    PRO_CODE = "pro_code"
+    AGENT_BUILDER = "agent_builder"
+    COPILOT_STUDIO = "copilot_studio"
+    UNKNOWN = "unknown"
 
 
 # ---------------------------------------------------------------------------
 # RiskLevel / RiskFlag
 # ---------------------------------------------------------------------------
 
+
 class RiskLevel(str, Enum):
     """Severity of a risk flag, ordered from lowest to highest."""
 
-    INFO   = "INFO"
-    LOW    = "LOW"
+    INFO = "INFO"
+    LOW = "LOW"
     MEDIUM = "MEDIUM"
-    HIGH   = "HIGH"
+    HIGH = "HIGH"
 
 
 @dataclass
 class RiskFlag:
     """A single rule evaluation result produced by risk_engine.evaluate()."""
 
-    rule_id:     str        # e.g. "INACTIVE", "ORPHAN"
-    level:       RiskLevel
-    message_en:  str
-    message_fr:  str
-    data_source: str        # 'graph' | 'purview' | 'purview-inferred' | 'unavailable'
+    rule_id: str  # e.g. "INACTIVE", "ORPHAN"
+    level: RiskLevel
+    message_en: str
+    message_fr: str
+    data_source: str  # 'graph' | 'purview' | 'purview-inferred' | 'unavailable'
 
 
 # ---------------------------------------------------------------------------
 # Agent
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class Agent:
@@ -97,15 +100,15 @@ class Agent:
     element_types: list[str]
     agent_type: str
     is_blocked: bool
-    publisher: Optional[dict[str, Any]]
+    publisher: dict[str, Any] | None
     available_to: list[dict[str, Any]]
     deployed_to: list[dict[str, Any]]
     supported_hosts: list[str]
-    version: Optional[str]
-    last_modified_datetime: Optional[datetime]
+    version: str | None
+    last_modified_datetime: datetime | None
 
     # Populated after Purview enrichment
-    purview_last_interaction: Optional[datetime] = field(default=None)
+    purview_last_interaction: datetime | None = field(default=None)
     purview_top_knowledge_sources: list[KnowledgeSource] = field(default_factory=list)
 
     # Populated by risk_engine.evaluate()
@@ -117,7 +120,7 @@ class Agent:
     # ------------------------------------------------------------------
 
     @classmethod
-    def from_graph_payload(cls, payload: dict[str, Any]) -> "Agent":
+    def from_graph_payload(cls, payload: dict[str, Any]) -> Agent:
         """
         Construct an Agent from a raw Graph API response item.
 
@@ -125,12 +128,10 @@ class Agent:
         callers don't need to handle KeyError / None everywhere.
         """
         raw_dt = payload.get("lastModifiedDateTime")
-        last_modified: Optional[datetime] = None
+        last_modified: datetime | None = None
         if raw_dt:
             try:
-                last_modified = datetime.fromisoformat(
-                    raw_dt.replace("Z", "+00:00")
-                )
+                last_modified = datetime.fromisoformat(raw_dt.replace("Z", "+00:00"))
             except ValueError:
                 pass
 
@@ -155,13 +156,10 @@ class Agent:
     @property
     def is_org_scoped(self) -> bool:
         """True when the agent is available tenant-wide (not just to one user)."""
-        return any(
-            (a.get("type") or "").lower() == "organization"
-            for a in self.available_to
-        )
+        return any((a.get("type") or "").lower() == "organization" for a in self.available_to)
 
     @property
-    def days_since_modified(self) -> Optional[int]:
+    def days_since_modified(self) -> int | None:
         """Number of full days since lastModifiedDateTime, or None if unknown."""
         if self.last_modified_datetime is None:
             return None
@@ -172,6 +170,7 @@ class Agent:
 # ---------------------------------------------------------------------------
 # PurviewData
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class PurviewData:
@@ -185,7 +184,7 @@ class PurviewData:
     agent_id: str
 
     # Timestamp of the most recent recorded interaction
-    last_interaction: Optional[datetime] = field(default=None)
+    last_interaction: datetime | None = field(default=None)
 
     # Running count of knowledge-source references
     _source_counter: Counter = field(default_factory=Counter, repr=False)
@@ -209,10 +208,7 @@ class PurviewData:
         self.record_count += 1
 
         # Track last interaction time
-        raw_ts = (
-            record.get("createdDateTime")
-            or record.get("activityDateTime")
-        )
+        raw_ts = record.get("createdDateTime") or record.get("activityDateTime")
         if raw_ts:
             try:
                 ts = datetime.fromisoformat(raw_ts.replace("Z", "+00:00"))
@@ -229,6 +225,4 @@ class PurviewData:
 
     def compute_top_sources(self, top_n: int = 5) -> None:
         """Populate `top_knowledge_sources` with the N most-referenced sources."""
-        self.top_knowledge_sources = [
-            src for src, _ in self._source_counter.most_common(top_n)
-        ]
+        self.top_knowledge_sources = [src for src, _ in self._source_counter.most_common(top_n)]

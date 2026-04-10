@@ -24,7 +24,7 @@ import logging
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
@@ -39,33 +39,34 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 RISK_BADGE_COLOR: dict[str, str] = {
-    RiskLevel.HIGH.value:   "#dc2626",   # red-600
-    RiskLevel.MEDIUM.value: "#ea580c",   # orange-600
-    RiskLevel.LOW.value:    "#ca8a04",   # yellow-600
-    RiskLevel.INFO.value:   "#6b7280",   # gray-500
-    "none":                 "#16a34a",   # green-600
+    RiskLevel.HIGH.value: "#dc2626",  # red-600
+    RiskLevel.MEDIUM.value: "#ea580c",  # orange-600
+    RiskLevel.LOW.value: "#ca8a04",  # yellow-600
+    RiskLevel.INFO.value: "#6b7280",  # gray-500
+    "none": "#16a34a",  # green-600
 }
 
 ORIGIN_BADGE_COLOR: dict[str, str] = {
-    AgentOrigin.AGENT_BUILDER.value:      "#dc2626",
-    AgentOrigin.SHAREPOINT_AGENT.value:   "#dc2626",
-    AgentOrigin.COPILOT_STUDIO.value:     "#ea580c",
-    AgentOrigin.PRO_CODE.value:           "#ea580c",
+    AgentOrigin.AGENT_BUILDER.value: "#dc2626",
+    AgentOrigin.SHAREPOINT_AGENT.value: "#dc2626",
+    AgentOrigin.COPILOT_STUDIO.value: "#ea580c",
+    AgentOrigin.PRO_CODE.value: "#ea580c",
     AgentOrigin.MICROSOFT_PREBUILT.value: "#16a34a",
-    AgentOrigin.UNKNOWN.value:            "#6b7280",
+    AgentOrigin.UNKNOWN.value: "#6b7280",
 }
 
 DATA_SOURCE_BADGE_COLOR: dict[str, str] = {
-    "graph":           "#16a34a",
-    "purview":         "#2563eb",
-    "purview-inferred":"#ea580c",
-    "unavailable":     "#6b7280",
+    "graph": "#16a34a",
+    "purview": "#2563eb",
+    "purview-inferred": "#ea580c",
+    "unavailable": "#6b7280",
 }
 
 
 # ---------------------------------------------------------------------------
 # ReportGenerator
 # ---------------------------------------------------------------------------
+
 
 class ReportGenerator:
     """
@@ -86,12 +87,12 @@ class ReportGenerator:
         tenant_name: str,
         scan_date: datetime,
         agents: list[Agent],
-        version: Optional[str] = None,
+        version: str | None = None,
     ) -> None:
         self.tenant_name = tenant_name
-        self.scan_date   = scan_date.astimezone(timezone.utc)
-        self.agents      = agents
-        self.version     = version or __version__
+        self.scan_date = scan_date.astimezone(timezone.utc)
+        self.agents = agents
+        self.version = version or __version__
 
     # ------------------------------------------------------------------
     # Public API
@@ -103,7 +104,7 @@ class ReportGenerator:
 
         Creates parent directories if they do not exist.
         """
-        stats       = self._compute_stats()
+        stats = self._compute_stats()
         agents_data = [self._serialize_agent(a) for a in self.agents]
 
         env = Environment(
@@ -113,15 +114,15 @@ class ReportGenerator:
         template = env.get_template("report_template.html")
 
         html = template.render(
-            tenant_name   = self.tenant_name,
-            scan_date     = self.scan_date.strftime("%Y-%m-%d %H:%M UTC"),
-            version       = self.version,
-            stats         = stats,
-            agents        = agents_data,
-            agents_json   = json.dumps(agents_data, ensure_ascii=False),
-            risk_colors   = RISK_BADGE_COLOR,
-            origin_colors = ORIGIN_BADGE_COLOR,
-            ds_colors     = DATA_SOURCE_BADGE_COLOR,
+            tenant_name=self.tenant_name,
+            scan_date=self.scan_date.strftime("%Y-%m-%d %H:%M UTC"),
+            version=self.version,
+            stats=stats,
+            agents=agents_data,
+            agents_json=json.dumps(agents_data, ensure_ascii=False),
+            risk_colors=RISK_BADGE_COLOR,
+            origin_colors=ORIGIN_BADGE_COLOR,
+            ds_colors=DATA_SOURCE_BADGE_COLOR,
         )
 
         out = Path(output_path)
@@ -134,16 +135,14 @@ class ReportGenerator:
     # ------------------------------------------------------------------
 
     def _compute_stats(self) -> dict[str, Any]:
-        total           = len(self.agents)
+        total = len(self.agents)
         high_risk_count = sum(
-            1 for a in self.agents
-            if any(f.level == RiskLevel.HIGH for f in a.risk_flags)
+            1 for a in self.agents if any(f.level == RiskLevel.HIGH for f in a.risk_flags)
         )
         orphan_count = sum(
-            1 for a in self.agents
-            if any(f.rule_id == "ORPHAN" for f in a.risk_flags)
+            1 for a in self.agents if any(f.rule_id == "ORPHAN" for f in a.risk_flags)
         )
-        shared_count  = sum(1 for a in self.agents if a.is_org_scoped)
+        shared_count = sum(1 for a in self.agents if a.is_org_scoped)
         private_count = total - shared_count
 
         origin_counts: Counter[str] = Counter()
@@ -163,13 +162,13 @@ class ReportGenerator:
                 risk_level_counts[worst.level.value] += 1
 
         return {
-            "total_agents":     total,
-            "high_risk_count":  high_risk_count,
-            "orphan_count":     orphan_count,
-            "shared_count":     shared_count,
-            "private_count":    private_count,
+            "total_agents": total,
+            "high_risk_count": high_risk_count,
+            "orphan_count": orphan_count,
+            "shared_count": shared_count,
+            "private_count": private_count,
             "agents_by_origin": dict(origin_counts),
-            "agents_by_risk":   dict(risk_level_counts),
+            "agents_by_risk": dict(risk_level_counts),
         }
 
     # ------------------------------------------------------------------
@@ -200,38 +199,36 @@ class ReportGenerator:
             else "—"
         )
 
-        publisher_name = (
-            (agent.publisher or {}).get("displayName") or "—"
-        )
+        publisher_name = (agent.publisher or {}).get("displayName") or "—"
 
         flags = [
             {
-                "rule_id":     f.rule_id,
-                "level":       f.level.value,
-                "message_en":  f.message_en,
-                "message_fr":  f.message_fr,
+                "rule_id": f.rule_id,
+                "level": f.level.value,
+                "message_en": f.message_en,
+                "message_fr": f.message_fr,
                 "data_source": f.data_source,
-                "color":       RISK_BADGE_COLOR.get(f.level.value, "#6b7280"),
-                "ds_color":    DATA_SOURCE_BADGE_COLOR.get(f.data_source, "#6b7280"),
+                "color": RISK_BADGE_COLOR.get(f.level.value, "#6b7280"),
+                "ds_color": DATA_SOURCE_BADGE_COLOR.get(f.data_source, "#6b7280"),
             }
             for f in agent.risk_flags
         ]
 
         return {
-            "id":                agent.id,
-            "display_name":      agent.display_name,
-            "agent_type":        agent.agent_type,
-            "element_types":     agent.element_types,
-            "is_blocked":        agent.is_blocked,
-            "is_org_scoped":     agent.is_org_scoped,
-            "publisher":         publisher_name,
-            "version":           agent.version or "—",
-            "last_modified":     last_modified,
-            "last_interaction":  last_interaction,
-            "origin":            origin.value,
-            "origin_color":      ORIGIN_BADGE_COLOR.get(origin.value, "#6b7280"),
-            "worst_level":       worst_level,
-            "worst_color":       RISK_BADGE_COLOR.get(worst_level, "#16a34a"),
-            "flags":             flags,
+            "id": agent.id,
+            "display_name": agent.display_name,
+            "agent_type": agent.agent_type,
+            "element_types": agent.element_types,
+            "is_blocked": agent.is_blocked,
+            "is_org_scoped": agent.is_org_scoped,
+            "publisher": publisher_name,
+            "version": agent.version or "—",
+            "last_modified": last_modified,
+            "last_interaction": last_interaction,
+            "origin": origin.value,
+            "origin_color": ORIGIN_BADGE_COLOR.get(origin.value, "#6b7280"),
+            "worst_level": worst_level,
+            "worst_color": RISK_BADGE_COLOR.get(worst_level, "#16a34a"),
+            "flags": flags,
             "knowledge_sources": agent.purview_top_knowledge_sources,
         }
