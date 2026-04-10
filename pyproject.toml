@@ -81,7 +81,11 @@ markers = [
 
 [tool.coverage.run]
 source = ["src/copilotscan"]
-omit = ["tests/*"]
+omit = [
+    "tests/*",
+    "src/copilotscan/collectors/*",
+    "src/copilotscan/__main__.py",
+]
 
 [tool.coverage.report]
 # Collectors (graph.py, purview.py) require live Graph/Purview API calls
