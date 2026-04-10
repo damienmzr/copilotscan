@@ -1,22 +1,41 @@
 """
-auth.py — CopilotScan v0.1.0
-Module d'authentification MSAL pour Microsoft Graph API (Copilot endpoints).
+auth.py - Module d'authentification MSAL pour CopilotScan
+==========================================================
 
-Stratégie :
-  - Device Code Flow (DELEGATED) par défaut → requis pour /copilot/admin/catalog/packages
-  - Client Credentials Flow (APP-ONLY) disponible mais limité (424 sur /packages/{id})
-  - Cache de token persistant (MSAL SerializableTokenCache) pour éviter re-auth
+Supporte trois modes d'authentification :
+  - device-code  : Interactif, pour les administrateurs (Device Code Flow)
+  - app-secret   : Non interactif, via Client Secret (pour l'automatisation)
+  - app-cert     : Non interactif, via Certificat X.509 (pour l'automatisation sécurisée)
 
-Rôle minimum requis sur le compte connecté : AI Admin + Reports Reader
-Scopes couverts :
-  - CopilotPackages.Read.All      → GET /catalog/packages, /catalog/packages/{id}
-  - Reports.Read.All              → GET /reports/getMicrosoft365CopilotUsageUserDetail
-  - AiEnterpriseInteraction.Read.All → GET /copilot/users/{id}/interactionHistory (app-only)
+Principe du moindre privilège
+------------------------------
+Les scopes Microsoft Graph utilisés sont strictement limités au minimum requis
+pour l'audit Copilot :
+
+  - Reports.Read.All           : Lecture des rapports d'utilisation Copilot
+  - AuditLog.Read.All          : Accès aux journaux d'audit (activité Copilot)
+  - Directory.Read.All         : Lecture de l'annuaire (utilisateurs/groupes)
+  - User.Read.All              : Informations sur les utilisateurs (licences)
+
+⚠️  Ces permissions APPLICATION nécessitent le consentement d'un Global Admin.
+    Le mode device-code utilise des permissions DÉLÉGUÉES (agit au nom de l'admin connecté).
+
+Usage CLI :
+    python auth.py --auth device-code
+    python auth.py --auth app-secret --config config.yaml
+    python auth.py --auth app-cert   --config config.yaml
+
+Variables d'environnement supportées :
+    COPILOT_SCAN_CLIENT_ID      : App Registration Client ID
+    COPILOT_SCAN_TENANT_ID      : Azure AD Tenant ID
+    COPILOT_SCAN_CLIENT_SECRET  : Client Secret (mode app-secret)
+    COPILOT_SCAN_CERT_PATH      : Chemin vers le certificat PEM (mode app-cert)
+    COPILOT_SCAN_CERT_THUMB     : Thumbprint SHA1 du certificat (optionnel)
 """
 
 from __future__ import annotations
 
-import json
+import argparse
 import logging
 import os
 import sys
@@ -27,463 +46,727 @@ from pathlib import Path
 from typing import Optional
 
 import msal
+import yaml
 
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
-logger = logging.getLogger("copilotscan.auth")
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+logger = logging.getLogger("copilot_scan.auth")
 
 
 # ---------------------------------------------------------------------------
 # Constantes
 # ---------------------------------------------------------------------------
-GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0"
-GRAPH_BETA_URL = "https://graph.microsoft.com/beta"
-AUTHORITY_TEMPLATE = "https://login.microsoftonline.com/{tenant_id}"
 
-# Scopes délégués (Device Code Flow) — principe du moindre privilège
+GRAPH_BASE_URL: str = "https://graph.microsoft.com"
+AUTHORITY_BASE: str = "https://login.microsoftonline.com"
+
+# Scopes DÉLÉGUÉS pour Device Code Flow (agit au nom de l'admin connecté).
+# Principe du moindre privilège : seuls les droits nécessaires à l'audit Copilot.
 DELEGATED_SCOPES: list[str] = [
-    "https://graph.microsoft.com/CopilotPackages.Read.All",
     "https://graph.microsoft.com/Reports.Read.All",
-    "offline_access",  # Pour le refresh token
+    "https://graph.microsoft.com/AuditLog.Read.All",
+    "https://graph.microsoft.com/Directory.Read.All",
+    "https://graph.microsoft.com/User.Read.All",
 ]
 
-# Scopes applicatifs (Client Credentials) — uniquement pour interactionHistory
-APP_SCOPES: list[str] = [
+# Scopes APPLICATION pour Client Credentials (app-secret / app-cert).
+# .default demande toutes les permissions APPLICATION accordées dans l'App Registration.
+# Limitez les permissions de l'App Registration au strict nécessaire (voir README).
+APPLICATION_SCOPES: list[str] = [
     "https://graph.microsoft.com/.default",
 ]
 
-# Durée minimale de validité du token avant renouvellement anticipé (secondes)
-TOKEN_REFRESH_BUFFER_SECONDS = 300  # 5 minutes
-
-# Chemin du cache de tokens par défaut
-DEFAULT_CACHE_PATH = Path.home() / ".copilotscan" / "token_cache.bin"
+# Délai maximum (secondes) pour que l'utilisateur complète le Device Code Flow
+DEVICE_CODE_TIMEOUT: int = 300  # 5 minutes
 
 
 # ---------------------------------------------------------------------------
-# Enums
+# Modèles de données
 # ---------------------------------------------------------------------------
-class AuthFlow(str, Enum):
-    """Flux d'authentification supportés."""
-    DEVICE_CODE = "device_code"       # Délégué, interactif — défaut recommandé
-    CLIENT_CREDENTIALS = "client_credentials"  # App-only — limité sur catalog/{id}
 
 
-# ---------------------------------------------------------------------------
-# Dataclasses de configuration
-# ---------------------------------------------------------------------------
+class AuthMode(str, Enum):
+    """Modes d'authentification supportés."""
+
+    DEVICE_CODE = "device-code"
+    APP_SECRET = "app-secret"
+    APP_CERT = "app-cert"
+
+
 @dataclass
 class AuthConfig:
     """
-    Configuration complète pour l'authentification MSAL.
+    Configuration d'authentification chargée depuis config.yaml ou variables d'env.
 
-    Exemple d'utilisation minimale (Device Code Flow) :
-        config = AuthConfig(
-            client_id="<app-registration-client-id>",
-            tenant_id="<your-tenant-id>",
-        )
-
-    Variables d'environnement supportées (priorité sur les valeurs passées) :
-        COPILOTSCAN_CLIENT_ID
-        COPILOTSCAN_TENANT_ID
-        COPILOTSCAN_CLIENT_SECRET   (uniquement pour client_credentials)
-        COPILOTSCAN_CACHE_PATH
+    Attributes:
+        client_id: ID de l'App Registration Azure AD.
+        tenant_id: ID du tenant Azure AD (ou 'common' pour multi-tenant).
+        client_secret: Secret client (mode app-secret uniquement).
+        cert_path: Chemin vers la clé privée PEM (mode app-cert uniquement).
+        cert_thumbprint: Thumbprint SHA1 du certificat (optionnel, mode app-cert).
+        cache_file: Chemin du fichier de cache de tokens (optionnel).
+        auth_mode: Mode d'authentification sélectionné.
     """
-    client_id: str = field(default="")
-    tenant_id: str = field(default="")
-    client_secret: Optional[str] = field(default=None, repr=False)
-    flow: AuthFlow = field(default=AuthFlow.DEVICE_CODE)
-    cache_path: Path = field(default=DEFAULT_CACHE_PATH)
-    # Compte à cibler si plusieurs comptes en cache
-    preferred_account: Optional[str] = field(default=None)
 
-    def __post_init__(self) -> None:
-        # Priorité aux variables d'environnement
-        self.client_id = os.getenv("COPILOTSCAN_CLIENT_ID", self.client_id)
-        self.tenant_id = os.getenv("COPILOTSCAN_TENANT_ID", self.tenant_id)
-        self.client_secret = os.getenv("COPILOTSCAN_CLIENT_SECRET", self.client_secret)
-        cache_env = os.getenv("COPILOTSCAN_CACHE_PATH")
-        if cache_env:
-            self.cache_path = Path(cache_env)
-
-        self._validate()
-
-    def _validate(self) -> None:
-        errors: list[str] = []
-        if not self.client_id:
-            errors.append("client_id manquant (ou COPILOTSCAN_CLIENT_ID non défini)")
-        if not self.tenant_id:
-            errors.append("tenant_id manquant (ou COPILOTSCAN_TENANT_ID non défini)")
-        if self.flow == AuthFlow.CLIENT_CREDENTIALS and not self.client_secret:
-            errors.append(
-                "client_secret requis pour AuthFlow.CLIENT_CREDENTIALS "
-                "(ou COPILOTSCAN_CLIENT_SECRET non défini)\n"
-                "⚠️  Rappel : ce flux retourne 424 sur /catalog/packages/{id}"
-            )
-        if errors:
-            raise ValueError(
-                "AuthConfig invalide :\n" + "\n".join(f"  • {e}" for e in errors)
-            )
+    client_id: str
+    tenant_id: str
+    client_secret: Optional[str] = None
+    cert_path: Optional[Path] = None
+    cert_thumbprint: Optional[str] = None
+    cache_file: Optional[Path] = None
+    auth_mode: AuthMode = AuthMode.DEVICE_CODE
+    extra_scopes: list[str] = field(default_factory=list)
 
     @property
     def authority(self) -> str:
-        return AUTHORITY_TEMPLATE.format(tenant_id=self.tenant_id)
+        """URL de l'autorité Azure AD."""
+        return f"{AUTHORITY_BASE}/{self.tenant_id}"
+
+    @property
+    def scopes(self) -> list[str]:
+        """Retourne les scopes adaptés au mode d'authentification."""
+        base = (
+            DELEGATED_SCOPES
+            if self.auth_mode == AuthMode.DEVICE_CODE
+            else APPLICATION_SCOPES
+        )
+        return base + self.extra_scopes
 
 
-# ---------------------------------------------------------------------------
-# Résultat d'authentification
-# ---------------------------------------------------------------------------
 @dataclass
-class AuthResult:
-    """Token et métadonnées retournés après authentification réussie."""
+class TokenResult:
+    """
+    Résultat d'une acquisition de token.
+
+    Attributes:
+        access_token: Bearer token à utiliser dans les requêtes Graph.
+        expires_in: Durée de validité en secondes.
+        token_type: Type de token (généralement 'Bearer').
+        scope: Scopes accordés.
+        expires_at: Timestamp UNIX d'expiration (calculé).
+    """
+
     access_token: str
-    flow_used: AuthFlow
-    expires_at: float          # timestamp UTC
-    account_upn: Optional[str] = None  # None pour client_credentials
-    scopes_granted: list[str] = field(default_factory=list)
+    expires_in: int
+    token_type: str = "Bearer"
+    scope: str = ""
+    expires_at: float = field(default_factory=float)
+
+    def __post_init__(self) -> None:
+        if not self.expires_at:
+            self.expires_at = time.time() + self.expires_in
 
     @property
     def is_expired(self) -> bool:
-        return time.time() >= (self.expires_at - TOKEN_REFRESH_BUFFER_SECONDS)
+        """Retourne True si le token a expiré (avec 60s de marge)."""
+        return time.time() >= (self.expires_at - 60)
 
     @property
-    def bearer_header(self) -> dict[str, str]:
-        """Header Authorization prêt à l'emploi pour requests/httpx."""
-        return {"Authorization": f"Bearer {self.access_token}"}
+    def authorization_header(self) -> str:
+        """Header HTTP Authorization prêt à l'emploi."""
+        return f"{self.token_type} {self.access_token}"
+
+
+# ---------------------------------------------------------------------------
+# Exceptions
+# ---------------------------------------------------------------------------
+
+
+class AuthError(Exception):
+    """Erreur générique d'authentification CopilotScan."""
+
+
+class AuthConfigError(AuthError):
+    """Configuration d'authentification invalide ou incomplète."""
+
+
+class AuthFlowError(AuthError):
+    """Échec du flux d'authentification MSAL."""
+
+
+class TokenExpiredError(AuthError):
+    """Le token est expiré et n'a pas pu être renouvelé."""
+
+
+# ---------------------------------------------------------------------------
+# Chargement de la configuration
+# ---------------------------------------------------------------------------
+
+
+def load_config(
+    config_path: Optional[Path] = None,
+    auth_mode: AuthMode = AuthMode.DEVICE_CODE,
+) -> AuthConfig:
+    """
+    Charge la configuration depuis un fichier YAML et/ou des variables d'environnement.
+
+    Les variables d'environnement ont priorité sur le fichier de configuration.
+
+    Args:
+        config_path: Chemin vers config.yaml (optionnel).
+        auth_mode: Mode d'authentification à utiliser.
+
+    Returns:
+        Instance AuthConfig complète et validée.
+
+    Raises:
+        AuthConfigError: Si la configuration est incomplète ou invalide.
+    """
+    raw: dict = {}
+
+    if config_path and config_path.exists():
+        logger.debug("Chargement de la configuration depuis %s", config_path)
+        try:
+            with config_path.open("r", encoding="utf-8") as fh:
+                raw = yaml.safe_load(fh) or {}
+        except yaml.YAMLError as exc:
+            raise AuthConfigError(f"Fichier YAML invalide : {config_path}") from exc
+    elif config_path:
+        logger.warning("Fichier de configuration introuvable : %s", config_path)
+
+    # Variables d'environnement (priorité maximale)
+    env_overrides = {
+        "client_id": os.getenv("COPILOT_SCAN_CLIENT_ID"),
+        "tenant_id": os.getenv("COPILOT_SCAN_TENANT_ID"),
+        "client_secret": os.getenv("COPILOT_SCAN_CLIENT_SECRET"),
+        "cert_path": os.getenv("COPILOT_SCAN_CERT_PATH"),
+        "cert_thumbprint": os.getenv("COPILOT_SCAN_CERT_THUMB"),
+    }
+    for key, val in env_overrides.items():
+        if val is not None:
+            raw[key] = val
+
+    # Validation des champs obligatoires
+    client_id = raw.get("client_id", "")
+    tenant_id = raw.get("tenant_id", "")
+
+    if not client_id:
+        raise AuthConfigError(
+            "client_id manquant. Définissez COPILOT_SCAN_CLIENT_ID "
+            "ou renseignez client_id dans config.yaml."
+        )
+    if not tenant_id:
+        raise AuthConfigError(
+            "tenant_id manquant. Définissez COPILOT_SCAN_TENANT_ID "
+            "ou renseignez tenant_id dans config.yaml."
+        )
+
+    # Résolution du certificat
+    cert_path: Optional[Path] = None
+    raw_cert = raw.get("cert_path")
+    if raw_cert:
+        cert_path = Path(raw_cert).expanduser().resolve()
+        if not cert_path.exists():
+            raise AuthConfigError(f"Certificat introuvable : {cert_path}")
+
+    # Résolution du cache
+    cache_file: Optional[Path] = None
+    raw_cache = raw.get("cache_file")
+    if raw_cache:
+        cache_file = Path(raw_cache).expanduser().resolve()
+
+    config = AuthConfig(
+        client_id=client_id,
+        tenant_id=tenant_id,
+        client_secret=raw.get("client_secret"),
+        cert_path=cert_path,
+        cert_thumbprint=raw.get("cert_thumbprint"),
+        cache_file=cache_file,
+        auth_mode=auth_mode,
+        extra_scopes=raw.get("extra_scopes", []),
+    )
+
+    _validate_config_for_mode(config)
+    return config
+
+
+def _validate_config_for_mode(config: AuthConfig) -> None:
+    """
+    Vérifie que la configuration contient les champs requis pour le mode sélectionné.
+
+    Args:
+        config: Configuration à valider.
+
+    Raises:
+        AuthConfigError: Si des champs obligatoires sont manquants.
+    """
+    if config.auth_mode == AuthMode.APP_SECRET and not config.client_secret:
+        raise AuthConfigError(
+            "Mode app-secret : client_secret requis. "
+            "Définissez COPILOT_SCAN_CLIENT_SECRET ou renseignez client_secret dans config.yaml."
+        )
+    if config.auth_mode == AuthMode.APP_CERT and not config.cert_path:
+        raise AuthConfigError(
+            "Mode app-cert : cert_path requis. "
+            "Définissez COPILOT_SCAN_CERT_PATH ou renseignez cert_path dans config.yaml."
+        )
 
 
 # ---------------------------------------------------------------------------
 # Gestionnaire de cache de tokens
 # ---------------------------------------------------------------------------
-class TokenCacheManager:
-    """Gère la sérialisation/désérialisation du cache MSAL sur disque."""
 
-    def __init__(self, cache_path: Path) -> None:
-        self._path = cache_path
-        self._cache = msal.SerializableTokenCache()
-        self._load()
 
-    def _load(self) -> None:
-        if self._path.exists():
-            try:
-                self._cache.deserialize(self._path.read_text(encoding="utf-8"))
-                logger.debug("Cache de tokens chargé depuis %s", self._path)
-            except Exception as exc:
-                logger.warning("Cache illisible, réinitialisation : %s", exc)
-                self._path.unlink(missing_ok=True)
+def _build_token_cache(cache_file: Optional[Path]) -> msal.SerializableTokenCache:
+    """
+    Crée un cache de tokens MSAL, persisté sur disque si cache_file est fourni.
 
-    def save(self) -> None:
-        if self._cache.has_state_changed:
-            self._path.parent.mkdir(parents=True, exist_ok=True)
-            self._path.write_text(self._cache.serialize(), encoding="utf-8")
-            logger.debug("Cache de tokens sauvegardé dans %s", self._path)
+    Args:
+        cache_file: Chemin du fichier de cache (None = mémoire uniquement).
 
-    @property
-    def msal_cache(self) -> msal.SerializableTokenCache:
-        return self._cache
+    Returns:
+        Instance SerializableTokenCache initialisée.
+    """
+    cache = msal.SerializableTokenCache()
+
+    if cache_file and cache_file.exists():
+        logger.debug("Chargement du cache de tokens depuis %s", cache_file)
+        cache.deserialize(cache_file.read_text(encoding="utf-8"))
+
+    return cache
+
+
+def _persist_token_cache(
+    cache: msal.SerializableTokenCache,
+    cache_file: Optional[Path],
+) -> None:
+    """
+    Persiste le cache de tokens sur disque si nécessaire.
+
+    Args:
+        cache: Cache MSAL à persister.
+        cache_file: Chemin de destination (None = pas de persistance).
+    """
+    if cache_file and cache.has_state_changed:
+        logger.debug("Sauvegarde du cache de tokens dans %s", cache_file)
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
+        cache_file.write_text(cache.serialize(), encoding="utf-8")
+        # Permissions restrictives sur le fichier de cache
+        cache_file.chmod(0o600)
 
 
 # ---------------------------------------------------------------------------
-# Classe principale
+# Authentification principale
 # ---------------------------------------------------------------------------
-class CopilotScanAuth:
+
+
+class CopilotScanAuthenticator:
     """
     Gestionnaire d'authentification MSAL pour CopilotScan.
 
-    Utilisation typique :
-        config = AuthConfig(client_id="...", tenant_id="...")
-        auth = CopilotScanAuth(config)
-        result = auth.authenticate()
-        headers = result.bearer_header
+    Gère l'acquisition, le renouvellement et la mise en cache des tokens
+    Microsoft Graph pour les trois modes supportés.
+
+    Example:
+        >>> config = load_config(Path("config.yaml"), AuthMode.DEVICE_CODE)
+        >>> auth = CopilotScanAuthenticator(config)
+        >>> token = auth.acquire_token()
+        >>> headers = {"Authorization": token.authorization_header}
     """
 
     def __init__(self, config: AuthConfig) -> None:
-        self._config = config
-        self._cache_mgr = TokenCacheManager(config.cache_path)
-        self._app: Optional[msal.ClientApplication] = None
-        self._last_result: Optional[AuthResult] = None
-
-    # ------------------------------------------------------------------
-    # Méthode publique principale
-    # ------------------------------------------------------------------
-    def authenticate(self) -> AuthResult:
         """
-        Authentifie l'application selon le flux configuré.
-        Réutilise le token en cache si toujours valide.
+        Initialise l'authentificateur.
+
+        Args:
+            config: Configuration d'authentification validée.
+        """
+        self._config = config
+        self._cache = _build_token_cache(config.cache_file)
+        self._app: Optional[msal.ClientApplication] = None
+        self._current_token: Optional[TokenResult] = None
+
+    def _get_app(self) -> msal.ClientApplication:
+        """
+        Construit ou retourne l'application MSAL selon le mode d'authentification.
 
         Returns:
-            AuthResult avec le token d'accès et les métadonnées.
+            Instance ConfidentialClientApplication ou PublicClientApplication.
+        """
+        if self._app is not None:
+            return self._app
+
+        cfg = self._config
+
+        if cfg.auth_mode == AuthMode.DEVICE_CODE:
+            # PublicClientApplication pour le flux interactif (Device Code)
+            self._app = msal.PublicClientApplication(
+                client_id=cfg.client_id,
+                authority=cfg.authority,
+                token_cache=self._cache,
+            )
+            logger.debug("PublicClientApplication initialisée (Device Code Flow)")
+
+        elif cfg.auth_mode == AuthMode.APP_SECRET:
+            # ConfidentialClientApplication avec Client Secret
+            self._app = msal.ConfidentialClientApplication(
+                client_id=cfg.client_id,
+                authority=cfg.authority,
+                client_credential=cfg.client_secret,
+                token_cache=self._cache,
+            )
+            logger.debug("ConfidentialClientApplication initialisée (Client Secret)")
+
+        elif cfg.auth_mode == AuthMode.APP_CERT:
+            # ConfidentialClientApplication avec Certificat X.509
+            cert_pem = cfg.cert_path.read_bytes()  # type: ignore[union-attr]
+            credential: dict = {"private_key": cert_pem}
+            if cfg.cert_thumbprint:
+                credential["thumbprint"] = cfg.cert_thumbprint
+
+            self._app = msal.ConfidentialClientApplication(
+                client_id=cfg.client_id,
+                authority=cfg.authority,
+                client_credential=credential,
+                token_cache=self._cache,
+            )
+            logger.debug("ConfidentialClientApplication initialisée (Certificat)")
+
+        return self._app  # type: ignore[return-value]
+
+    # ------------------------------------------------------------------
+    # Méthodes d'acquisition de token par mode
+    # ------------------------------------------------------------------
+
+    def _acquire_device_code(self) -> TokenResult:
+        """
+        Lance le flux Device Code Flow (interactif).
+
+        Affiche un code à entrer sur https://microsoft.com/devicelogin.
+        L'utilisateur doit être Global Admin ou avoir les droits délégués requis.
+
+        Returns:
+            TokenResult avec le token d'accès.
 
         Raises:
-            AuthenticationError si l'authentification échoue.
+            AuthFlowError: En cas d'échec ou de timeout du flux.
         """
-        # Réutiliser le token valide en mémoire
-        if self._last_result and not self._last_result.is_expired:
-            logger.debug("Token en mémoire encore valide, réutilisation.")
-            return self._last_result
+        app = self._get_app()
+        assert isinstance(app, msal.PublicClientApplication)
 
-        logger.info("Démarrage authentification (flux : %s)", self._config.flow.value)
-
-        if self._config.flow == AuthFlow.DEVICE_CODE:
-            result = self._device_code_flow()
-        elif self._config.flow == AuthFlow.CLIENT_CREDENTIALS:
-            result = self._client_credentials_flow()
-        else:
-            raise ValueError(f"Flux non supporté : {self._config.flow}")
-
-        self._cache_mgr.save()
-        self._last_result = result
-        logger.info(
-            "Authentification réussie | flux=%s | compte=%s | expire dans ~%ds",
-            result.flow_used.value,
-            result.account_upn or "app-only",
-            max(0, int(result.expires_at - time.time())),
-        )
-        return result
-
-    def get_headers(self) -> dict[str, str]:
-        """Raccourci : retourne directement les headers Authorization."""
-        return self.authenticate().bearer_header
-
-    def invalidate_cache(self) -> None:
-        """Supprime le cache de tokens sur disque et en mémoire."""
-        self._last_result = None
-        if self._config.cache_path.exists():
-            self._config.cache_path.unlink()
-            logger.info("Cache de tokens supprimé.")
-
-    # ------------------------------------------------------------------
-    # Flux Device Code (DÉLÉGUÉ — défaut recommandé)
-    # ------------------------------------------------------------------
-    def _device_code_flow(self) -> AuthResult:
-        """
-        Flux Device Code Flow (RFC 8628).
-
-        Idéal pour :
-          - Scripts CLI sans navigateur interactif
-          - Comptes avec MFA/Conditional Access
-          - Rôle AI Admin + Reports Reader (pas Global Admin)
-
-        Le token est mis en cache — l'utilisateur ne se reconnecte pas
-        à chaque exécution tant que le refresh token est valide.
-        """
-        app = self._get_public_app()
-
-        # 1. Tentative depuis le cache d'abord
-        accounts = app.get_accounts(
-            username=self._config.preferred_account
-        )
+        # Tenter d'abord un token silencieux depuis le cache
+        accounts = app.get_accounts()
         if accounts:
-            logger.debug("Compte(s) en cache : %s", [a["username"] for a in accounts])
-            token_response = app.acquire_token_silent(
-                scopes=DELEGATED_SCOPES,
+            logger.info("Tentative d'acquisition silencieuse (cache)...")
+            result = app.acquire_token_silent(
+                scopes=self._config.scopes,
                 account=accounts[0],
             )
-            if token_response and "access_token" in token_response:
-                logger.info("Token récupéré depuis le cache MSAL.")
-                return self._build_result(token_response, AuthFlow.DEVICE_CODE)
+            if result and "access_token" in result:
+                logger.info("Token obtenu depuis le cache.")
+                return self._parse_token_result(result)
 
-        # 2. Initier le Device Code Flow
-        flow = app.initiate_device_flow(scopes=DELEGATED_SCOPES)
+        # Lancement du Device Code Flow
+        flow = app.initiate_device_flow(scopes=self._config.scopes)
         if "user_code" not in flow:
-            raise AuthenticationError(
-                f"Impossible d'initier le Device Code Flow : {flow.get('error_description', flow)}"
+            raise AuthFlowError(
+                f"Impossible d'initier le Device Code Flow : {flow.get('error_description', 'Erreur inconnue')}"
             )
 
-        # Affichage clair des instructions
-        self._print_device_code_instructions(flow)
+        # Affichage des instructions pour l'utilisateur
+        print("\n" + "=" * 60)
+        print("  AUTHENTIFICATION REQUISE")
+        print("=" * 60)
+        print(f"\n  1. Ouvrez : {flow.get('verification_uri', 'https://microsoft.com/devicelogin')}")
+        print(f"  2. Entrez le code : {flow['user_code']}")
+        print(f"\n  Expiration dans {DEVICE_CODE_TIMEOUT // 60} minutes.")
+        print("=" * 60 + "\n")
 
-        # 3. Attente de la validation utilisateur (polling automatique par MSAL)
-        token_response = app.acquire_token_by_device_flow(flow)
-        return self._process_token_response(token_response, AuthFlow.DEVICE_CODE)
-
-    # ------------------------------------------------------------------
-    # Flux Client Credentials (APP-ONLY — limité)
-    # ------------------------------------------------------------------
-    def _client_credentials_flow(self) -> AuthResult:
-        """
-        Flux Client Credentials (OAuth2 client_credentials grant).
-
-        ⚠️  LIMITATIONS IMPORTANTES pour CopilotScan :
-          - GET /catalog/packages : fonctionne (LIST uniquement)
-          - GET /catalog/packages/{id} : retourne 424 Failed Dependency
-          - À n'utiliser que pour AiEnterpriseInteraction.Read.All (interactionHistory)
-
-        Recommandation : préférer Device Code Flow pour les endpoints admin catalog.
-        """
-        logger.warning(
-            "⚠️  Client Credentials Flow actif. "
-            "GET /catalog/packages/{id} retournera 424 — utilisez Device Code Flow "
-            "pour les endpoints admin catalog."
+        logger.info("En attente de l'authentification Device Code...")
+        result = app.acquire_token_by_device_flow(
+            flow,
+            exit_condition=lambda flow: time.time() > flow["expires_at"],
         )
-        app = self._get_confidential_app()
-        token_response = app.acquire_token_for_client(scopes=APP_SCOPES)
-        return self._process_token_response(token_response, AuthFlow.CLIENT_CREDENTIALS)
+
+        return self._handle_token_result(result, "Device Code Flow")
+
+    def _acquire_client_credentials(self) -> TokenResult:
+        """
+        Acquiert un token via Client Credentials (app-secret ou app-cert).
+
+        Tente d'abord une acquisition silencieuse depuis le cache.
+
+        Returns:
+            TokenResult avec le token d'accès.
+
+        Raises:
+            AuthFlowError: En cas d'échec.
+        """
+        app = self._get_app()
+        assert isinstance(app, msal.ConfidentialClientApplication)
+
+        logger.info("Acquisition du token via Client Credentials...")
+        result = app.acquire_token_for_client(scopes=self._config.scopes)
+        return self._handle_token_result(result, "Client Credentials")
 
     # ------------------------------------------------------------------
-    # Helpers internes
+    # Interface publique
     # ------------------------------------------------------------------
-    def _get_public_app(self) -> msal.PublicClientApplication:
-        """Construit ou réutilise l'app publique MSAL (Device Code)."""
-        if not isinstance(self._app, msal.PublicClientApplication):
-            self._app = msal.PublicClientApplication(
-                client_id=self._config.client_id,
-                authority=self._config.authority,
-                token_cache=self._cache_mgr.msal_cache,
-            )
-        return self._app  # type: ignore[return-value]
 
-    def _get_confidential_app(self) -> msal.ConfidentialClientApplication:
-        """Construit ou réutilise l'app confidentielle MSAL (Client Credentials)."""
-        if not isinstance(self._app, msal.ConfidentialClientApplication):
-            self._app = msal.ConfidentialClientApplication(
-                client_id=self._config.client_id,
-                client_credential=self._config.client_secret,
-                authority=self._config.authority,
-                token_cache=self._cache_mgr.msal_cache,
-            )
-        return self._app  # type: ignore[return-value]
+    def acquire_token(self) -> TokenResult:
+        """
+        Acquiert un token d'accès Microsoft Graph selon le mode configuré.
 
-    def _process_token_response(
-        self, response: dict, flow: AuthFlow
-    ) -> AuthResult:
-        """Valide la réponse MSAL et lève une erreur si nécessaire."""
-        if "access_token" not in response:
-            error = response.get("error", "unknown_error")
-            description = response.get("error_description", "Aucun détail disponible.")
-            raise AuthenticationError(
-                f"Échec d'authentification [{flow.value}]\n"
-                f"  Erreur : {error}\n"
-                f"  Détail : {description}\n\n"
-                f"Vérifications :\n"
-                f"  • Rôle du compte : AI Admin + Reports Reader requis\n"
-                f"  • Consentement admin accordé sur les scopes Graph\n"
-                f"  • Tenant ID et Client ID corrects\n"
-                f"  • Copilot activé dans le Microsoft 365 Admin Center"
-            )
-        return self._build_result(response, flow)
+        Si un token valide est en cache, il est retourné directement.
+        Sinon, le flux d'authentification approprié est lancé.
 
-    def _build_result(self, response: dict, flow: AuthFlow) -> AuthResult:
-        """Construit un AuthResult depuis la réponse MSAL."""
-        expires_in = response.get("expires_in", 3600)
-        account = response.get("account") or {}
-        upn = account.get("username") if account else None
-        scopes = response.get("scope", "").split()
+        Returns:
+            TokenResult prêt à l'emploi.
 
-        return AuthResult(
-            access_token=response["access_token"],
-            flow_used=flow,
-            expires_at=time.time() + expires_in,
-            account_upn=upn,
-            scopes_granted=scopes,
+        Raises:
+            AuthFlowError: En cas d'échec du flux d'authentification.
+            AuthConfigError: Si la configuration est invalide pour le mode.
+        """
+        # Retourner le token en mémoire s'il est encore valide
+        if self._current_token and not self._current_token.is_expired:
+            logger.debug("Token valide en mémoire (expires dans %.0fs).",
+                         self._current_token.expires_at - time.time())
+            return self._current_token
+
+        logger.info("Acquisition d'un nouveau token (mode: %s)...", self._config.auth_mode.value)
+
+        mode = self._config.auth_mode
+        if mode == AuthMode.DEVICE_CODE:
+            token = self._acquire_device_code()
+        elif mode in (AuthMode.APP_SECRET, AuthMode.APP_CERT):
+            token = self._acquire_client_credentials()
+        else:
+            raise AuthConfigError(f"Mode d'authentification non supporté : {mode}")
+
+        self._current_token = token
+        _persist_token_cache(self._cache, self._config.cache_file)
+
+        logger.info(
+            "Token acquis avec succès. Expire dans %d secondes.",
+            token.expires_in,
+        )
+        return token
+
+    def refresh_token(self) -> TokenResult:
+        """
+        Force le renouvellement du token (ignore le cache mémoire).
+
+        Returns:
+            Nouveau TokenResult.
+
+        Raises:
+            AuthFlowError: En cas d'échec du renouvellement.
+        """
+        logger.info("Renouvellement forcé du token...")
+        self._current_token = None
+        return self.acquire_token()
+
+    def get_auth_header(self) -> dict[str, str]:
+        """
+        Retourne un dictionnaire de headers HTTP avec le token Bearer.
+
+        Renouvelle automatiquement le token s'il est expiré.
+
+        Returns:
+            Dictionnaire {"Authorization": "Bearer <token>"}.
+
+        Raises:
+            TokenExpiredError: Si le token ne peut pas être renouvelé.
+        """
+        try:
+            token = self.acquire_token()
+            if token.is_expired:
+                token = self.refresh_token()
+        except AuthFlowError as exc:
+            raise TokenExpiredError(
+                "Impossible de renouveler le token d'accès."
+            ) from exc
+
+        return {"Authorization": token.authorization_header}
+
+    # ------------------------------------------------------------------
+    # Méthodes utilitaires privées
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _parse_token_result(result: dict) -> TokenResult:
+        """
+        Convertit un résultat MSAL brut en TokenResult.
+
+        Args:
+            result: Dictionnaire retourné par MSAL.
+
+        Returns:
+            TokenResult structuré.
+        """
+        return TokenResult(
+            access_token=result["access_token"],
+            expires_in=result.get("expires_in", 3600),
+            token_type=result.get("token_type", "Bearer"),
+            scope=result.get("scope", ""),
         )
 
     @staticmethod
-    def _print_device_code_instructions(flow: dict) -> None:
-        """Affiche les instructions Device Code de manière lisible."""
-        separator = "─" * 60
-        print(f"\n{separator}")
-        print("  🔐  CopilotScan — Authentification requise")
-        print(separator)
-        print(f"  1. Ouvrez : {flow.get('verification_uri', 'https://microsoft.com/devicelogin')}")
-        print(f"  2. Entrez le code : {flow.get('user_code', '???')}")
-        print(f"  3. Connectez-vous avec un compte ayant le rôle :")
-        print(f"       AI Admin  +  Reports Reader")
-        print(f"  ℹ️  Code valide {flow.get('expires_in', 900) // 60} minutes")
-        print(f"{separator}\n")
-        sys.stdout.flush()
+    def _handle_token_result(result: dict, flow_name: str) -> TokenResult:
+        """
+        Vérifie le résultat MSAL et lève une exception en cas d'erreur.
+
+        Args:
+            result: Résultat brut de l'acquisition MSAL.
+            flow_name: Nom du flux pour les messages d'erreur.
+
+        Returns:
+            TokenResult si succès.
+
+        Raises:
+            AuthFlowError: Si MSAL retourne une erreur.
+        """
+        if "access_token" not in result:
+            error = result.get("error", "unknown_error")
+            description = result.get("error_description", "Aucun détail disponible.")
+            correlation_id = result.get("correlation_id", "N/A")
+
+            logger.error(
+                "[%s] Échec d'authentification : %s — %s (correlation_id: %s)",
+                flow_name, error, description, correlation_id,
+            )
+
+            # Messages d'erreur spécifiques et actionnables
+            user_hint = _get_error_hint(error, description)
+            raise AuthFlowError(
+                f"[{flow_name}] {error}: {description}\n💡 {user_hint}"
+            )
+
+        return CopilotScanAuthenticator._parse_token_result(result)
 
 
 # ---------------------------------------------------------------------------
-# Exception dédiée
+# Aide contextuelle aux erreurs
 # ---------------------------------------------------------------------------
-class AuthenticationError(Exception):
-    """Levée quand l'authentification MSAL échoue."""
 
 
-# ---------------------------------------------------------------------------
-# Fonction utilitaire de haut niveau
-# ---------------------------------------------------------------------------
-def get_auth_headers(
-    client_id: str,
-    tenant_id: str,
-    client_secret: Optional[str] = None,
-    flow: AuthFlow = AuthFlow.DEVICE_CODE,
-    cache_path: Optional[Path] = None,
-) -> dict[str, str]:
+def _get_error_hint(error: str, description: str) -> str:
     """
-    Fonction d'entrée simplifiée pour obtenir les headers d'autorisation.
+    Retourne un message d'aide contextuel pour les erreurs MSAL courantes.
 
     Args:
-        client_id:     ID de l'app registration Azure AD.
-        tenant_id:     ID du tenant Microsoft 365.
-        client_secret: Secret client (uniquement pour CLIENT_CREDENTIALS).
-        flow:          Flux OAuth2 (DEVICE_CODE par défaut — recommandé).
-        cache_path:    Chemin du cache de tokens (optionnel).
+        error: Code d'erreur MSAL/Azure AD.
+        description: Description de l'erreur.
 
     Returns:
-        Dict {"Authorization": "Bearer <token>"} prêt pour requests/httpx.
-
-    Exemple :
-        headers = get_auth_headers(
-            client_id="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
-            tenant_id="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
-        )
-        response = requests.get(
-            "https://graph.microsoft.com/beta/copilot/admin/catalog/packages",
-            headers=headers,
-        )
+        Message d'aide lisible par un humain.
     """
-    kwargs = {}
-    if cache_path:
-        kwargs["cache_path"] = cache_path
+    hints: dict[str, str] = {
+        "authorization_pending": "L'utilisateur n'a pas encore complété l'authentification Device Code.",
+        "authorization_declined": "L'utilisateur a refusé l'authentification.",
+        "expired_token": "Le code Device Code a expiré. Relancez l'authentification.",
+        "invalid_client": "Client ID ou secret invalide. Vérifiez votre App Registration.",
+        "invalid_grant": "Le token ou le refresh token est invalide. Réauthentifiez-vous.",
+        "unauthorized_client": "L'application n'est pas autorisée pour ce flux. Vérifiez les permissions dans Azure AD.",
+        "consent_required": "Le consentement administrateur est requis. Un Global Admin doit approuver les permissions.",
+        "interaction_required": "Une interaction utilisateur est nécessaire. Utilisez le mode device-code.",
+        "AADSTS70011": "Scope invalide. Vérifiez les permissions configurées dans l'App Registration.",
+        "AADSTS50020": "L'utilisateur n'appartient pas au tenant configuré.",
+        "AADSTS700016": "Application introuvable dans le tenant. Vérifiez le client_id et le tenant_id.",
+        "AADSTS65001": "Consentement administrateur requis pour les permissions demandées.",
+    }
 
-    config = AuthConfig(
-        client_id=client_id,
-        tenant_id=tenant_id,
-        client_secret=client_secret,
-        flow=flow,
-        **kwargs,
-    )
-    auth = CopilotScanAuth(config)
-    return auth.get_headers()
+    # Recherche par code d'erreur exact
+    if error in hints:
+        return hints[error]
+
+    # Recherche par codes AADSTS dans la description
+    for code, hint in hints.items():
+        if code.startswith("AADSTS") and code in description:
+            return hint
+
+    return "Consultez https://learn.microsoft.com/azure/active-directory/develop/reference-error-codes"
 
 
 # ---------------------------------------------------------------------------
-# Point d'entrée test rapide
+# Point d'entrée CLI
 # ---------------------------------------------------------------------------
-if __name__ == "__main__":
-    """
-    Test rapide depuis la ligne de commande.
 
-    Usage :
-        python auth.py
-        COPILOTSCAN_CLIENT_ID=xxx COPILOTSCAN_TENANT_ID=yyy python auth.py
-    """
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
+
+def _build_cli_parser() -> argparse.ArgumentParser:
+    """Construit le parseur d'arguments CLI."""
+    parser = argparse.ArgumentParser(
+        prog="auth.py",
+        description="Module d'authentification CopilotScan (MSAL Python)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Exemples :
+  python auth.py --auth device-code
+  python auth.py --auth app-secret --config config.yaml
+  python auth.py --auth app-cert   --config /etc/copilot-scan/config.yaml
+
+Variables d'environnement :
+  COPILOT_SCAN_CLIENT_ID      Client ID de l'App Registration
+  COPILOT_SCAN_TENANT_ID      Tenant ID Azure AD
+  COPILOT_SCAN_CLIENT_SECRET  Client Secret (mode app-secret)
+  COPILOT_SCAN_CERT_PATH      Chemin du certificat PEM (mode app-cert)
+  COPILOT_SCAN_CERT_THUMB     Thumbprint SHA1 (optionnel, mode app-cert)
+        """,
     )
+    parser.add_argument(
+        "--auth",
+        dest="auth_mode",
+        choices=[m.value for m in AuthMode],
+        default=AuthMode.DEVICE_CODE.value,
+        help="Mode d'authentification (défaut: device-code)",
+    )
+    parser.add_argument(
+        "--config",
+        dest="config_path",
+        type=Path,
+        default=Path("config.yaml"),
+        help="Chemin vers config.yaml (défaut: ./config.yaml)",
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Active les logs de debug",
+    )
+    return parser
+
+
+def main() -> None:
+    """Point d'entrée principal du module d'authentification."""
+    parser = _build_cli_parser()
+    args = parser.parse_args()
+
+    if args.debug:
+        logging.getLogger().setLevel(logging.DEBUG)
+        logging.getLogger("msal").setLevel(logging.DEBUG)
 
     try:
-        config = AuthConfig(
-            client_id=os.getenv("COPILOTSCAN_CLIENT_ID", ""),
-            tenant_id=os.getenv("COPILOTSCAN_TENANT_ID", ""),
-            flow=AuthFlow.DEVICE_CODE,
+        config = load_config(
+            config_path=args.config_path,
+            auth_mode=AuthMode(args.auth_mode),
         )
-        auth = CopilotScanAuth(config)
-        result = auth.authenticate()
+
+        auth = CopilotScanAuthenticator(config)
+        token = auth.acquire_token()
 
         print("\n✅ Authentification réussie !")
-        print(f"   Compte    : {result.account_upn or 'app-only'}")
-        print(f"   Flux      : {result.flow_used.value}")
-        print(f"   Scopes    : {', '.join(result.scopes_granted) or 'N/A'}")
-        print(f"   Expire    : dans {max(0, int(result.expires_at - time.time()))}s")
-        print(f"   Token     : {result.access_token[:40]}…\n")
+        print(f"   Mode         : {config.auth_mode.value}")
+        print(f"   Tenant       : {config.tenant_id}")
+        print(f"   Client ID    : {config.client_id}")
+        print(f"   Expire dans  : {token.expires_in}s")
+        print(f"   Scopes       : {token.scope or ', '.join(config.scopes)}")
+        print(f"\n   Token (extrait) : {token.access_token[:40]}…\n")
 
-    except AuthenticationError as e:
-        print(f"\n❌ Erreur d'authentification :\n{e}", file=sys.stderr)
+    except AuthConfigError as exc:
+        logger.error("❌ Erreur de configuration : %s", exc)
         sys.exit(1)
-    except ValueError as e:
-        print(f"\n❌ Configuration invalide :\n{e}", file=sys.stderr)
+    except AuthFlowError as exc:
+        logger.error("❌ Erreur d'authentification : %s", exc)
         sys.exit(2)
+    except KeyboardInterrupt:
+        print("\n⚠️  Authentification annulée.")
+        sys.exit(3)
+
+
+if __name__ == "__main__":
+    main()

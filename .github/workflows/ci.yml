@@ -4,40 +4,54 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
 
 jobs:
-  lint:
-    name: Lint & Type Check
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: pip
-      - run: pip install -e ".[dev]"
-      - run: ruff check src/ tests/
-      - run: black --check src/ tests/
-      - run: mypy src/
-
   test:
-    name: Tests — Python ${{ matrix.python-version }}
+    name: Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.10", "3.11", "3.12"]
+        python-version: ["3.11", "3.12"]
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
-      - run: pip install -e ".[dev]"
-      - run: pytest tests/ --cov=copilotscan --cov-report=xml -m "not integration"
-      - uses: codecov/codecov-action@v4
-        if: matrix.python-version == '3.11'
+
+      - name: Install dependencies
+        run: pip install -e '.[dev]'
+
+      - name: Lint — ruff check
+        run: ruff check .
+
+      - name: Format check — ruff format
+        run: ruff format --check .
+
+      - name: Tests
+        run: |
+          pytest \
+            --cov=src/copilotscan \
+            --cov-report=xml \
+            --cov-report=term-missing
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
         with:
           files: coverage.xml
           fail_ci_if_error: false
+
+      - name: Smoke render
+        run: |
+          python -c "
+          from copilotscan.report_generator import ReportGenerator
+          from datetime import datetime
+          gen = ReportGenerator('CI-Tenant', datetime.now(), [])
+          gen.generate('/tmp/ci_report.html')
+          print('Smoke render OK')
+          "

@@ -1,0 +1,132 @@
+# ==============================================================================
+# CopilotScan — Fichier de configuration exemple
+# Copiez ce fichier en config.yaml et adaptez les valeurs à votre environnement.
+# ==============================================================================
+#
+# ⚠️  SÉCURITÉ : Ne commitez JAMAIS config.yaml dans votre dépôt Git.
+#     Ajoutez config.yaml à votre .gitignore.
+#     Pour les secrets, préférez les variables d'environnement ou un vault.
+#
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# Identifiants Azure AD (OBLIGATOIRES)
+# ------------------------------------------------------------------------------
+
+# Client ID de votre App Registration Azure AD
+# Accessible via : Azure Portal > Azure Active Directory > App registrations > <votre app> > Overview
+# Variable d'env équivalente : COPILOT_SCAN_CLIENT_ID
+client_id: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+
+# Tenant ID de votre organisation Azure AD
+# Accessible via : Azure Portal > Azure Active Directory > Overview > Tenant ID
+# Variable d'env équivalente : COPILOT_SCAN_TENANT_ID
+tenant_id: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+
+# ------------------------------------------------------------------------------
+# Mode app-secret : Client Secret (automatisation simple)
+# ------------------------------------------------------------------------------
+# Décommentez cette section pour le mode --auth app-secret
+#
+# ⚠️  Principe du moindre privilège :
+#     - Créez un secret dédié à CopilotScan avec une durée de vie courte (6-12 mois max)
+#     - Stockez de préférence ce secret dans Azure Key Vault ou une variable d'env CI/CD
+#     - Variable d'env équivalente : COPILOT_SCAN_CLIENT_SECRET
+#
+# client_secret: "votre-client-secret-ici"
+
+# ------------------------------------------------------------------------------
+# Mode app-cert : Certificat X.509 (automatisation sécurisée — RECOMMANDÉ)
+# ------------------------------------------------------------------------------
+# Décommentez cette section pour le mode --auth app-cert
+#
+# ✅ Le certificat est plus sécurisé qu'un Client Secret car :
+#    - La clé privée ne quitte jamais votre infrastructure
+#    - Le certificat peut être révoqué individuellement
+#    - Supporte la rotation sans interruption de service
+#
+# Génération d'un certificat auto-signé (dev/test uniquement) :
+#   openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem \
+#     -days 365 -nodes -subj "/CN=CopilotScan"
+#
+# Enregistrement du certificat public dans Azure AD :
+#   Azure Portal > App registrations > <votre app> > Certificates & secrets > Upload certificate
+#   (uploadez cert.pem, conservez key.pem en local de façon sécurisée)
+#
+# Variable d'env équivalente : COPILOT_SCAN_CERT_PATH
+# cert_path: "/etc/copilot-scan/certs/key.pem"
+#
+# Thumbprint SHA1 du certificat (visible dans Azure Portal après upload)
+# Optionnel mais recommandé pour éviter toute ambiguïté si plusieurs certs sont enregistrés
+# Variable d'env équivalente : COPILOT_SCAN_CERT_THUMB
+# cert_thumbprint: "AABBCCDDEEFF0011223344556677889900AABBCC"
+
+# ------------------------------------------------------------------------------
+# Cache de tokens (optionnel)
+# ------------------------------------------------------------------------------
+# Chemin du fichier de cache de tokens MSAL.
+# Évite de réauthentifier à chaque exécution (utile pour le mode device-code).
+# Le fichier est créé avec les permissions 600 (lecture/écriture propriétaire uniquement).
+#
+# ⚠️  Ne stockez pas ce fichier dans un répertoire partagé ou un dépôt Git.
+#
+# cache_file: "~/.copilot-scan/token_cache.json"
+
+# ------------------------------------------------------------------------------
+# Scopes additionnels (optionnel — avancé)
+# ------------------------------------------------------------------------------
+# Ajoutez ici des scopes Microsoft Graph supplémentaires si nécessaire.
+# Les scopes de base requis pour CopilotScan sont déjà inclus automatiquement :
+#   - Reports.Read.All
+#   - AuditLog.Read.All
+#   - Directory.Read.All
+#   - User.Read.All
+#
+# Principe du moindre privilège : n'ajoutez que les scopes strictement nécessaires.
+#
+# extra_scopes: []
+
+# ==============================================================================
+# PRINCIPE DU MOINDRE PRIVILÈGE — Guide de configuration Azure AD
+# ==============================================================================
+#
+# 1. CRÉER L'APP REGISTRATION
+#    Azure Portal > Azure Active Directory > App registrations > New registration
+#    - Nom : CopilotScan (ou nom de votre choix)
+#    - Types de comptes : "Accounts in this organizational directory only"
+#    - URI de redirection : aucune (non nécessaire pour Device Code / Client Credentials)
+#
+# 2. CONFIGURER LES PERMISSIONS API (Application permissions — non déléguées)
+#    Azure Portal > App registrations > <votre app> > API permissions > Add a permission
+#    > Microsoft Graph > Application permissions
+#
+#    Permissions MINIMALES requises :
+#    ┌────────────────────────────────┬──────────────────────────────────────────────┐
+#    │ Permission                     │ Justification                                │
+#    ├────────────────────────────────┼──────────────────────────────────────────────┤
+#    │ Reports.Read.All               │ Rapports d'utilisation Copilot               │
+#    │ AuditLog.Read.All              │ Journaux d'audit (activité Copilot)          │
+#    │ Directory.Read.All             │ Lecture de l'annuaire (utilisateurs/groupes) │
+#    │ User.Read.All                  │ Informations licences utilisateurs            │
+#    └────────────────────────────────┴──────────────────────────────────────────────┘
+#
+#    ❌ NE PAS accorder : User.ReadWrite.All, Mail.Read, Files.Read.All,
+#                         RoleManagement.ReadWrite.Directory, ou tout droit Write.
+#
+# 3. ACCORDER LE CONSENTEMENT ADMINISTRATEUR
+#    Azure Portal > App registrations > <votre app> > API permissions
+#    > Grant admin consent for <votre organisation>
+#    (Requiert le rôle Global Admin ou Privileged Role Administrator)
+#
+# 4. RESTREINDRE L'ACCÈS À L'APPLICATION (OPTIONNEL MAIS RECOMMANDÉ)
+#    Azure Portal > Enterprise applications > <votre app> > Properties
+#    > "Assignment required" = Yes
+#    Azure Portal > Enterprise applications > <votre app> > Users and groups
+#    > Ajouter uniquement les comptes de service autorisés
+#
+# 5. JOURNALISATION ET SURVEILLANCE
+#    - Activez les Diagnostic Settings sur votre App Registration
+#    - Envoyez les logs vers Log Analytics Workspace ou Event Hub
+#    - Créez des alertes pour les activités inhabituelles (ex: appels hors horaires)
+#
+# ==============================================================================
