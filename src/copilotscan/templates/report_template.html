@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CopilotScan — {{ tenant_name }}</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg:       #f8fafc;
+      --surface:  #ffffff;
+      --border:   #e2e8f0;
+      --text:     #0f172a;
+      --muted:    #64748b;
+      --accent:   #3b82f6;
+      --red:      #dc2626;
+      --orange:   #ea580c;
+      --yellow:   #ca8a04;
+      --green:    #16a34a;
+      --gray:     #6b7280;
+      --radius:   8px;
+      --shadow:   0 1px 3px rgba(0,0,0,.10), 0 1px 2px rgba(0,0,0,.06);
+    }
+    body { font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); font-size: 14px; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    /* ── Layout ── */
+    .container { max-width: 1280px; margin: 0 auto; padding: 0 24px; }
+
+    /* ── Header ── */
+    .header { background: #1e293b; color: #f1f5f9; padding: 20px 0; }
+    .header-inner { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+    .header h1 { font-size: 22px; font-weight: 700; letter-spacing: -.3px; }
+    .header h1 span { color: #60a5fa; }
+    .header-meta { font-size: 12px; color: #94a3b8; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+    .version-badge { background: #334155; color: #e2e8f0; padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: 600; }
+
+    /* ── KPI cards ── */
+    .kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin: 24px 0 20px; }
+    .kpi-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px 20px; box-shadow: var(--shadow); }
+    .kpi-card .kpi-label { font-size: 12px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .5px; }
+    .kpi-card .kpi-value { font-size: 36px; font-weight: 800; margin-top: 6px; line-height: 1; }
+    .kpi-card.danger  .kpi-value { color: var(--red); }
+    .kpi-card.warning .kpi-value { color: var(--orange); }
+    .kpi-card.neutral .kpi-value { color: var(--accent); }
+
+    /* ── Charts ── */
+    .charts-row { display: grid; grid-template-columns: 1fr 2fr; gap: 16px; margin-bottom: 20px; }
+    @media (max-width: 700px) { .charts-row { grid-template-columns: 1fr; } }
+    .chart-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; box-shadow: var(--shadow); }
+    .chart-card h3 { font-size: 13px; font-weight: 600; color: var(--muted); margin-bottom: 14px; text-transform: uppercase; letter-spacing: .4px; }
+    .chart-wrap { position: relative; height: 220px; }
+
+    /* ── Risk banner ── */
+    .risk-banner { background: #fef2f2; border: 1px solid #fca5a5; border-radius: var(--radius); padding: 12px 18px; margin-bottom: 20px; display: flex; align-items: center; gap: 12px; }
+    .risk-banner .icon { font-size: 20px; }
+    .risk-banner strong { color: var(--red); }
+    .risk-banner.hidden { display: none; }
+
+    /* ── Controls ── */
+    .controls { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; margin-bottom: 12px; box-shadow: var(--shadow); display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+    .controls input[type=text] { flex: 1; min-width: 180px; padding: 7px 12px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; outline: none; }
+    .controls input[type=text]:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(59,130,246,.15); }
+    .controls select { padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; background: var(--surface); cursor: pointer; outline: none; }
+    .controls select:focus { border-color: var(--accent); }
+    .btn-csv { margin-left: auto; padding: 7px 16px; background: var(--accent); color: #fff; border: none; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; transition: background .15s; }
+    .btn-csv:hover { background: #2563eb; }
+
+    /* ── Table ── */
+    .table-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    thead th { background: #f1f5f9; padding: 10px 14px; text-align: left; font-size: 12px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; border-bottom: 1px solid var(--border); cursor: pointer; white-space: nowrap; user-select: none; }
+    thead th:hover { background: #e2e8f0; }
+    thead th .sort-icon { display: inline-block; margin-left: 4px; opacity: .4; font-style: normal; }
+    thead th.asc  .sort-icon::after { content: " ▲"; opacity: 1; }
+    thead th.desc .sort-icon::after { content: " ▼"; opacity: 1; }
+    thead th:not(.asc):not(.desc) .sort-icon::after { content: " ⇅"; }
+    tbody tr { border-bottom: 1px solid var(--border); transition: background .1s; }
+    tbody tr:last-child { border-bottom: none; }
+    tbody tr:hover { background: #f8fafc; }
+    tbody tr.expanded { background: #eff6ff !important; }
+    tbody td { padding: 10px 14px; vertical-align: middle; }
+    tbody td.name-cell { font-weight: 600; color: var(--text); cursor: pointer; }
+    tbody td.name-cell:hover { color: var(--accent); }
+    .no-results { text-align: center; color: var(--muted); padding: 32px; font-size: 14px; }
+
+    /* ── Expand row ── */
+    .detail-row td { padding: 0; background: #f0f9ff; }
+    .detail-inner { padding: 14px 28px 16px; border-top: 1px solid #bae6fd; }
+    .detail-inner h4 { font-size: 12px; font-weight: 700; text-transform: uppercase; color: var(--muted); margin-bottom: 10px; letter-spacing: .4px; }
+    .flag-grid { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+    .flag-row { display: flex; align-items: flex-start; gap: 10px; }
+    .flag-row .f-rule { font-weight: 700; font-size: 11px; white-space: nowrap; }
+    .flag-row .f-msg  { color: #334155; font-size: 12px; line-height: 1.45; }
+    .ks-list { display: flex; flex-wrap: wrap; gap: 6px; }
+    .ks-tag { font-size: 11px; background: #e0f2fe; color: #0369a1; padding: 2px 8px; border-radius: 4px; word-break: break-all; }
+    .ks-empty { font-size: 12px; color: var(--muted); font-style: italic; }
+
+    /* ── Badges ── */
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 700; color: #fff; white-space: nowrap; }
+    .badge-outline { background: transparent !important; border: 1px solid currentColor; color: inherit !important; padding: 1px 7px; }
+
+    /* ── Misc ── */
+    .blocked-chip { font-size: 10px; background: #fde8e8; color: var(--red); border-radius: 4px; padding: 1px 6px; font-weight: 700; margin-left: 6px; }
+    .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; vertical-align: middle; }
+
+    /* ── Footer ── */
+    footer { text-align: center; padding: 24px 0 32px; color: var(--muted); font-size: 12px; }
+    footer span { margin: 0 6px; }
+  </style>
+</head>
+<body>
+
+<!-- ══════════════════════════════════════════════════════════════════ -->
+<!-- 1. HEADER                                                          -->
+<!-- ══════════════════════════════════════════════════════════════════ -->
+<header class="header">
+  <div class="container header-inner">
+    <h1>&#x1F916; <span>CopilotScan</span> — Audit Report</h1>
+    <div class="header-meta">
+      <div><strong style="color:#e2e8f0">{{ tenant_name }}</strong></div>
+      <div>{{ scan_date }}</div>
+      <div class="version-badge">v{{ version }}</div>
+    </div>
+  </div>
+</header>
+
+<main class="container">
+
+  <!-- ════════════════════════════════════════════════════════════════ -->
+  <!-- 2. KPI CARDS                                                     -->
+  <!-- ════════════════════════════════════════════════════════════════ -->
+  <div class="kpi-row">
+    <div class="kpi-card neutral">
+      <div class="kpi-label">Total Agents</div>
+      <div class="kpi-value">{{ stats.total_agents }}</div>
+    </div>
+    <div class="kpi-card {% if stats.high_risk_count > 0 %}danger{% else %}neutral{% endif %}">
+      <div class="kpi-label">High Risk</div>
+      <div class="kpi-value">{{ stats.high_risk_count }}</div>
+    </div>
+    <div class="kpi-card {% if stats.orphan_count > 0 %}danger{% else %}neutral{% endif %}">
+      <div class="kpi-label">Orphans</div>
+      <div class="kpi-value">{{ stats.orphan_count }}</div>
+    </div>
+    <div class="kpi-card neutral">
+      <div class="kpi-label">Org-Scoped</div>
+      <div class="kpi-value">{{ stats.shared_count }}</div>
+    </div>
+    <div class="kpi-card neutral">
+      <div class="kpi-label">User-Scoped</div>
+      <div class="kpi-value">{{ stats.private_count }}</div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════════════════════════════ -->
+  <!-- 3. CHARTS                                                        -->
+  <!-- ════════════════════════════════════════════════════════════════ -->
+  <div class="charts-row">
+    <div class="chart-card">
+      <h3>Scope Distribution</h3>
+      <div class="chart-wrap">
+        <canvas id="chartScope"></canvas>
+      </div>
+    </div>
+    <div class="chart-card">
+      <h3>Agents by Origin</h3>
+      <div class="chart-wrap">
+        <canvas id="chartOrigin"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════════════════════════════ -->
+  <!-- 4. RISK BANNER                                                   -->
+  <!-- ════════════════════════════════════════════════════════════════ -->
+  {% if stats.high_risk_count > 0 %}
+  <div class="risk-banner">
+    <span class="icon">&#x26A0;&#xFE0F;</span>
+    <div>
+      <strong>{{ stats.high_risk_count }} high-risk agent{{ 's' if stats.high_risk_count != 1 else '' }} detected.</strong>
+      Review the flagged agents below and take remediation action.
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- ════════════════════════════════════════════════════════════════ -->
+  <!-- 5. CONTROLS                                                      -->
+  <!-- ════════════════════════════════════════════════════════════════ -->
+  <div class="controls">
+    <input type="text" id="filterText" placeholder="&#x1F50D;  Search by name, publisher, type…" oninput="applyFilters()" />
+    <select id="filterOrigin" onchange="applyFilters()">
+      <option value="">All Origins</option>
+      <option value="agent_builder">Agent Builder</option>
+      <option value="sharepoint_agent">SharePoint Agent</option>
+      <option value="copilot_studio">Copilot Studio</option>
+      <option value="pro_code">Pro Code</option>
+      <option value="microsoft_prebuilt">Microsoft Prebuilt</option>
+      <option value="unknown">Unknown</option>
+    </select>
+    <select id="filterRisk" onchange="applyFilters()">
+      <option value="">All Risk Levels</option>
+      <option value="HIGH">High</option>
+      <option value="MEDIUM">Medium</option>
+      <option value="LOW">Low</option>
+      <option value="INFO">Info</option>
+      <option value="none">Clean</option>
+    </select>
+    <select id="filterScope" onchange="applyFilters()">
+      <option value="">All Scopes</option>
+      <option value="true">Org-Scoped</option>
+      <option value="false">User-Scoped</option>
+    </select>
+    <button class="btn-csv" onclick="exportCSV()">&#x2B73; Export CSV</button>
+  </div>
+
+  <!-- ════════════════════════════════════════════════════════════════ -->
+  <!-- 6. MAIN TABLE                                                    -->
+  <!-- ════════════════════════════════════════════════════════════════ -->
+  <div class="table-wrap">
+    <table id="agentTable">
+      <thead>
+        <tr>
+          <th onclick="sortTable(0)" data-col="0">Name <i class="sort-icon"></i></th>
+          <th onclick="sortTable(1)" data-col="1">Origin <i class="sort-icon"></i></th>
+          <th onclick="sortTable(2)" data-col="2">Type <i class="sort-icon"></i></th>
+          <th onclick="sortTable(3)" data-col="3">Scope <i class="sort-icon"></i></th>
+          <th onclick="sortTable(4)" data-col="4">Publisher <i class="sort-icon"></i></th>
+          <th onclick="sortTable(5)" data-col="5">Last Modified <i class="sort-icon"></i></th>
+          <th onclick="sortTable(6)" data-col="6">Risk <i class="sort-icon"></i></th>
+        </tr>
+      </thead>
+      <tbody id="tableBody">
+        {%- for agent in agents %}
+        <tr class="agent-row"
+            data-id="{{ agent.id }}"
+            data-name="{{ agent.display_name | lower }}"
+            data-origin="{{ agent.origin }}"
+            data-risk="{{ agent.worst_level }}"
+            data-scope="{{ agent.is_org_scoped | lower }}"
+            data-publisher="{{ agent.publisher | lower }}"
+            data-type="{{ agent.agent_type | lower }}"
+            onclick="toggleDetail('{{ agent.id }}')">
+          <td class="name-cell">
+            {{ agent.display_name }}
+            {% if agent.is_blocked %}<span class="blocked-chip">BLOCKED</span>{% endif %}
+          </td>
+          <td>
+            <span class="badge" style="background:{{ agent.origin_color }}">
+              {{ agent.origin | replace('_', ' ') | title }}
+            </span>
+          </td>
+          <td>{{ agent.agent_type }}</td>
+          <td>
+            {% if agent.is_org_scoped %}
+              <span style="color:#2563eb;font-weight:600">&#x1F3E2; Org</span>
+            {% else %}
+              <span style="color:var(--muted)">&#x1F464; User</span>
+            {% endif %}
+          </td>
+          <td>{{ agent.publisher }}</td>
+          <td>{{ agent.last_modified }}</td>
+          <td>
+            {% if agent.flags %}
+              <span class="badge" style="background:{{ agent.worst_color }}">
+                {{ agent.worst_level }}
+              </span>
+            {% else %}
+              <span class="badge" style="background:#16a34a">Clean</span>
+            {% endif %}
+          </td>
+        </tr>
+        <tr class="detail-row" id="detail-{{ agent.id }}" style="display:none">
+          <td colspan="7">
+            <div class="detail-inner">
+              {% if agent.flags %}
+              <h4>Risk Flags ({{ agent.flags | length }})</h4>
+              <div class="flag-grid">
+                {%- for flag in agent.flags %}
+                <div class="flag-row">
+                  <span class="badge f-rule" style="background:{{ flag.color }}">{{ flag.rule_id }}</span>
+                  <span class="badge badge-outline f-rule" style="color:{{ flag.ds_color }};border-color:{{ flag.ds_color }}">{{ flag.data_source }}</span>
+                  <span class="f-msg">{{ flag.message_en }}</span>
+                </div>
+                {%- endfor %}
+              </div>
+              {% endif %}
+              <h4>Knowledge Sources{% if agent.last_interaction != '—' %} &nbsp;<small style="font-weight:400;text-transform:none;color:var(--muted)">last Purview activity: {{ agent.last_interaction }}</small>{% endif %}</h4>
+              <div class="ks-list">
+                {%- if agent.knowledge_sources %}
+                  {%- for ks in agent.knowledge_sources %}
+                  <span class="ks-tag">{{ ks }}</span>
+                  {%- endfor %}
+                {%- else %}
+                  <span class="ks-empty">No knowledge sources recorded in Purview audit.</span>
+                {%- endif %}
+              </div>
+            </div>
+          </td>
+        </tr>
+        {%- endfor %}
+        <tr class="no-results-row" style="display:none">
+          <td colspan="7" class="no-results">No agents match the current filters.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+</main>
+
+<!-- ════════════════════════════════════════════════════════════════ -->
+<!-- 8. FOOTER                                                        -->
+<!-- ════════════════════════════════════════════════════════════════ -->
+<footer>
+  <span>Generated by <a href="https://github.com/damienmzr/copilotscan" target="_blank">CopilotScan</a> v{{ version }}</span>
+  <span>·</span>
+  <span>{{ scan_date }}</span>
+  <span>·</span>
+  <span>&copy; 2026 — MIT Licence</span>
+</footer>
+
+<!-- ════════════════════════════════════════════════════════════════ -->
+<!-- SCRIPTS                                                          -->
+<!-- ════════════════════════════════════════════════════════════════ -->
+<script>
+/* ── Agent data (injected by Jinja2) ── */
+const AGENTS = {{ agents_json }};
+
+/* ──────────────────────────────────────
+   Chart.js — Scope Doughnut
+────────────────────────────────────── */
+(function () {
+  const shared  = {{ stats.shared_count }};
+  const private_ = {{ stats.private_count }};
+  new Chart(document.getElementById('chartScope'), {
+    type: 'doughnut',
+    data: {
+      labels: ['Org-Scoped', 'User-Scoped'],
+      datasets: [{
+        data: [shared, private_],
+        backgroundColor: ['#3b82f6', '#94a3b8'],
+        borderWidth: 2,
+        borderColor: '#fff',
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'bottom', labels: { font: { size: 12 }, padding: 12 } },
+        tooltip: { callbacks: { label: ctx => ` ${ctx.parsed} agents` } }
+      },
+      cutout: '60%',
+    }
+  });
+})();
+
+/* ──────────────────────────────────────
+   Chart.js — Origin Bar
+────────────────────────────────────── */
+(function () {
+  const originMap = {{ stats.agents_by_origin | tojson }};
+  const labelMap = {
+    agent_builder:      'Agent Builder',
+    sharepoint_agent:   'SharePoint',
+    copilot_studio:     'Copilot Studio',
+    pro_code:           'Pro Code',
+    microsoft_prebuilt: 'MS Prebuilt',
+    unknown:            'Unknown',
+  };
+  const colorMap = {
+    agent_builder:      '#dc2626',
+    sharepoint_agent:   '#dc2626',
+    copilot_studio:     '#ea580c',
+    pro_code:           '#ea580c',
+    microsoft_prebuilt: '#16a34a',
+    unknown:            '#6b7280',
+  };
+  const keys   = Object.keys(originMap);
+  const labels = keys.map(k => labelMap[k] || k);
+  const values = keys.map(k => originMap[k]);
+  const colors = keys.map(k => colorMap[k] || '#6b7280');
+
+  new Chart(document.getElementById('chartOrigin'), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Agents',
+        data: values,
+        backgroundColor: colors,
+        borderRadius: 4,
+        borderSkipped: false,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: ctx => ` ${ctx.parsed.y} agents` } }
+      },
+      scales: {
+        y: { beginAtZero: true, ticks: { stepSize: 1, font: { size: 11 } }, grid: { color: '#f1f5f9' } },
+        x: { ticks: { font: { size: 11 } }, grid: { display: false } }
+      }
+    }
+  });
+})();
+
+/* ──────────────────────────────────────
+   Expand / collapse detail row
+────────────────────────────────────── */
+function toggleDetail(id) {
+  const detail = document.getElementById('detail-' + id);
+  if (!detail) return;
+  const agentRow = detail.previousElementSibling;
+  const isOpen = detail.style.display !== 'none';
+  detail.style.display = isOpen ? 'none' : '';
+  if (agentRow) agentRow.classList.toggle('expanded', !isOpen);
+}
+
+/* ──────────────────────────────────────
+   Sorting
+────────────────────────────────────── */
+let sortCol = -1, sortAsc = true;
+
+function sortTable(col) {
+  const tbody   = document.getElementById('tableBody');
+  const headers = document.querySelectorAll('thead th');
+
+  if (sortCol === col) sortAsc = !sortAsc;
+  else { sortCol = col; sortAsc = true; }
+
+  headers.forEach((h, i) => {
+    h.classList.remove('asc', 'desc');
+    if (i === col) h.classList.add(sortAsc ? 'asc' : 'desc');
+  });
+
+  // Collect (agentRow, detailRow) pairs
+  const rows = [];
+  const allRows = Array.from(tbody.querySelectorAll('tr.agent-row'));
+  allRows.forEach(r => {
+    const detail = document.getElementById('detail-' + r.dataset.id);
+    rows.push({ agent: r, detail });
+  });
+
+  rows.sort((a, b) => {
+    const va = a.agent.cells[col]?.textContent.trim().toLowerCase() || '';
+    const vb = b.agent.cells[col]?.textContent.trim().toLowerCase() || '';
+    return sortAsc ? va.localeCompare(vb) : vb.localeCompare(va);
+  });
+
+  rows.forEach(({ agent, detail }) => {
+    tbody.appendChild(agent);
+    if (detail) tbody.appendChild(detail);
+  });
+}
+
+/* ──────────────────────────────────────
+   Filtering
+────────────────────────────────────── */
+function applyFilters() {
+  const text   = document.getElementById('filterText').value.toLowerCase();
+  const origin = document.getElementById('filterOrigin').value;
+  const risk   = document.getElementById('filterRisk').value;
+  const scope  = document.getElementById('filterScope').value;
+
+  let visible = 0;
+  document.querySelectorAll('tr.agent-row').forEach(row => {
+    const matchText  = !text   || row.dataset.name.includes(text) || row.dataset.publisher.includes(text) || row.dataset.type.includes(text);
+    const matchOrigin= !origin || row.dataset.origin === origin;
+    const matchRisk  = !risk   || row.dataset.risk   === risk;
+    const matchScope = !scope  || row.dataset.scope  === scope;
+    const show = matchText && matchOrigin && matchRisk && matchScope;
+
+    row.style.display = show ? '' : 'none';
+    const detail = document.getElementById('detail-' + row.dataset.id);
+    if (detail && !show) detail.style.display = 'none';
+    if (show) visible++;
+  });
+
+  const noResults = document.querySelector('.no-results-row');
+  if (noResults) noResults.style.display = visible === 0 ? '' : 'none';
+}
+
+/* ──────────────────────────────────────
+   CSV Export
+────────────────────────────────────── */
+function exportCSV() {
+  const RISK_ORDER = ['HIGH', 'MEDIUM', 'LOW', 'INFO', 'none'];
+  const headers = ['ID', 'Name', 'Type', 'Origin', 'Scope', 'Publisher', 'Version',
+                   'Last Modified', 'Last Interaction', 'Worst Risk', 'Flags', 'Knowledge Sources'];
+
+  const rows = AGENTS.map(a => [
+    a.id,
+    a.display_name,
+    a.agent_type,
+    a.origin,
+    a.is_org_scoped ? 'Org' : 'User',
+    a.publisher,
+    a.version,
+    a.last_modified,
+    a.last_interaction,
+    a.worst_level,
+    a.flags.map(f => f.rule_id).join('; '),
+    a.knowledge_sources.join('; '),
+  ]);
+
+  const escape = v => '"' + String(v).replace(/"/g, '""') + '"';
+  const csv    = [headers, ...rows].map(r => r.map(escape).join(',')).join('\r\n');
+  const blob   = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url    = URL.createObjectURL(blob);
+  const link   = document.createElement('a');
+  link.href     = url;
+  link.download = 'copilotscan_{{ tenant_name | replace(" ", "_") }}_{{ scan_date | replace(" ", "_") | replace(":", "") }}.csv';
+  link.click();
+  URL.revokeObjectURL(url);
+}
+</script>
+</body>
+</html>

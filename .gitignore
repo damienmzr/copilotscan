@@ -90,6 +90,7 @@ report_*.html
 scan_*.html
 !examples/*.html
 !tests/fixtures/*.html
+!src/copilotscan/templates/*.html
 
 # Raw API response dumps
 raw_*.json
