@@ -69,7 +69,9 @@ AUTHORITY_BASE: str = "https://login.microsoftonline.com"
 # .default request all static delegated permissions pre-consented on the App Registration.
 # Ensure admin consent has been granted in Azure Portal before running.
 DELEGATED_SCOPES: list[str] = [
-    "https://graph.microsoft.com/.default",
+    "https://graph.microsoft.com/Reports.Read.All",
+    "https://graph.microsoft.com/Directory.Read.All",
+    "https://graph.microsoft.com/InformationProtectionPolicy.Read",
 ]
 
 # Scopes APPLICATION pour Client Credentials (app-secret / app-cert).
