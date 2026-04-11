@@ -87,11 +87,13 @@ class ReportGenerator:
         scan_date: datetime,
         agents: list[Agent],
         version: str | None = None,
+        github_handle: str = "damienmzr",
     ) -> None:
         self.tenant_name = tenant_name
         self.scan_date = scan_date.astimezone(timezone.utc)
         self.agents = agents
         self.version = version or __version__
+        self.github_handle = github_handle
 
     # ------------------------------------------------------------------
     # Public API
@@ -121,6 +123,7 @@ class ReportGenerator:
             risk_colors=RISK_BADGE_COLOR,
             origin_colors=ORIGIN_BADGE_COLOR,
             ds_colors=DATA_SOURCE_BADGE_COLOR,
+            github_handle=self.github_handle,
         )
 
         out = Path(output_path)

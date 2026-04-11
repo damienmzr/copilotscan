@@ -1,0 +1,909 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CopilotScan — Demo Tenant</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg:       #f8fafc;
+      --surface:  #ffffff;
+      --border:   #e2e8f0;
+      --text:     #3d3b3a;
+      --muted:    #64748b;
+      --accent:   #2faf88;
+      --red:      #dc2626;
+      --orange:   #ea580c;
+      --yellow:   #ca8a04;
+      --green:    #2faf88;
+      --gray:     #6b7280;
+      --radius:   8px;
+      --shadow:   0 1px 3px rgba(0,0,0,.10);
+      --brand-dark:   #3d3b3a;
+      --brand-accent: #2faf88;
+    }
+    body { font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); font-size: 14px; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    /* ── Layout ── */
+    .container { max-width: 1280px; margin: 0 auto; padding: 0 24px; }
+
+    /* ── Header ── */
+    .header { background: #3d3b3a; color: #ffffff; padding: 20px 0; }
+    .header-inner { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+    .header h1 { font-size: 22px; font-weight: 700; letter-spacing: -.3px; }
+    .header h1 span { color: #60a5fa; }
+    .header-meta { font-size: 12px; color: #94a3b8; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+    .version-badge { background: #2faf88; color: #ffffff; padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: 600; }
+
+    /* ── KPI cards ── */
+    .kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin: 24px 0 20px; }
+    .kpi-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px 20px; box-shadow: var(--shadow); }
+    .kpi-card .kpi-label { font-size: 12px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .5px; }
+    .kpi-card .kpi-value { font-size: 36px; font-weight: 800; margin-top: 6px; line-height: 1; }
+    .kpi-card.danger  .kpi-value { color: var(--red); }
+    .kpi-card.warning .kpi-value { color: var(--orange); }
+    .kpi-card.neutral .kpi-value { color: var(--accent); }
+
+    /* ── Charts ── */
+    .charts-row { display: grid; grid-template-columns: 1fr 2fr; gap: 16px; margin-bottom: 20px; }
+    @media (max-width: 700px) { .charts-row { grid-template-columns: 1fr; } }
+    .chart-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; box-shadow: var(--shadow); }
+    .chart-card h3 { font-size: 13px; font-weight: 600; color: var(--muted); margin-bottom: 14px; text-transform: uppercase; letter-spacing: .4px; }
+    .chart-wrap { position: relative; height: 220px; }
+
+    /* ── Risk banner ── */
+    .risk-banner { background: #fef2f2; border: 1px solid #fca5a5; border-radius: var(--radius); padding: 12px 18px; margin-bottom: 20px; display: flex; align-items: center; gap: 12px; }
+    .risk-banner .icon { font-size: 20px; }
+    .risk-banner strong { color: var(--red); }
+    .risk-banner.hidden { display: none; }
+
+    /* ── Controls ── */
+    .controls { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; margin-bottom: 12px; box-shadow: var(--shadow); display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+    .controls input[type=text] { flex: 1; min-width: 180px; padding: 7px 12px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; outline: none; }
+    .controls input[type=text]:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(59,130,246,.15); }
+    .controls select { padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; background: var(--surface); cursor: pointer; outline: none; }
+    .controls select:focus { border-color: var(--accent); }
+    .btn-csv { margin-left: auto; padding: 7px 16px; background: var(--accent); color: #fff; border: none; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; transition: background .15s; }
+    .btn-csv:hover { background: #259970; }
+
+    /* ── Table ── */
+    .table-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    thead th { background: #f1f5f9; padding: 10px 14px; text-align: left; font-size: 12px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; border-bottom: 1px solid var(--border); cursor: pointer; white-space: nowrap; user-select: none; }
+    thead th:hover { background: #e2e8f0; }
+    thead th .sort-icon { display: inline-block; margin-left: 4px; opacity: .4; font-style: normal; }
+    thead th.asc  .sort-icon::after { content: " ▲"; opacity: 1; }
+    thead th.desc .sort-icon::after { content: " ▼"; opacity: 1; }
+    thead th:not(.asc):not(.desc) .sort-icon::after { content: " ⇅"; }
+    tbody tr { border-bottom: 1px solid var(--border); transition: background .1s; }
+    tbody tr:last-child { border-bottom: none; }
+    tbody tr:hover { background: #f8fafc; }
+    tbody tr.expanded { background: #eff6ff !important; }
+    tbody td { padding: 10px 14px; vertical-align: middle; }
+    tbody td.name-cell { font-weight: 600; color: var(--text); cursor: pointer; }
+    tbody td.name-cell:hover { color: var(--accent); }
+    .no-results { text-align: center; color: var(--muted); padding: 32px; font-size: 14px; }
+
+    /* ── Expand row ── */
+    .detail-row td { padding: 0; background: #f0f9ff; }
+    .detail-inner { padding: 14px 28px 16px; border-top: 1px solid #bae6fd; }
+    .detail-inner h4 { font-size: 12px; font-weight: 700; text-transform: uppercase; color: var(--muted); margin-bottom: 10px; letter-spacing: .4px; }
+    .flag-grid { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+    .flag-row { display: flex; align-items: flex-start; gap: 10px; }
+    .flag-row .f-rule { font-weight: 700; font-size: 11px; white-space: nowrap; }
+    .flag-row .f-msg  { color: #334155; font-size: 12px; line-height: 1.45; }
+    .ks-list { display: flex; flex-wrap: wrap; gap: 6px; }
+    .ks-tag { font-size: 11px; background: #e0f2fe; color: #0369a1; padding: 2px 8px; border-radius: 4px; word-break: break-all; }
+    .ks-empty { font-size: 12px; color: var(--muted); font-style: italic; }
+
+    /* ── Badges ── */
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 700; color: #fff; white-space: nowrap; }
+    .badge-outline { background: transparent !important; border: 1px solid currentColor; color: inherit !important; padding: 1px 7px; }
+
+    /* ── Misc ── */
+    .blocked-chip { font-size: 10px; background: #fde8e8; color: var(--red); border-radius: 4px; padding: 1px 6px; font-weight: 700; margin-left: 6px; }
+    .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; vertical-align: middle; }
+
+    /* ── Footer ── */
+    footer { text-align: center; padding: 24px 0 32px; color: var(--muted); font-size: 12px; }
+    footer span { margin: 0 6px; }
+  </style>
+</head>
+<body>
+
+<!-- ══════════════════════════════════════════════════════════════════ -->
+<!-- 1. HEADER                                                          -->
+<!-- ══════════════════════════════════════════════════════════════════ -->
+<header class="header">
+  <div class="container header-inner">
+    <div style="display:flex;align-items:center;gap:16px;">
+      <a href="https://ouithink.fr" target="_blank">
+        <img src="https://ouithink.fr/images/logo-ouithink.png"
+             alt="Ouithink" height="64" width="64"
+             style="display:block;filter:brightness(0) invert(1);opacity:.9;" />
+      </a>
+      <div style="width:1px;height:48px;background:#5a5856;"></div>
+      <h1 style="font-size:20px;font-weight:700;color:#ffffff;letter-spacing:-.3px;">
+        🤖 <span style="color:#2faf88;">CopilotScan</span> — Audit Report
+      </h1>
+    </div>
+    <div class="header-meta">
+      <div><strong style="color:#ffffff">Demo Tenant</strong></div>
+      <div>2026-04-11 10:15 UTC</div>
+      <div class="version-badge">v0.1.0</div>
+    </div>
+  </div>
+</header>
+
+<main class="container">
+
+  <!-- ════════════════════════════════════════════════════════════════ -->
+  <!-- 2. KPI CARDS                                                     -->
+  <!-- ════════════════════════════════════════════════════════════════ -->
+  <div class="kpi-row">
+    <div class="kpi-card neutral">
+      <div class="kpi-label">Total Agents</div>
+      <div class="kpi-value">7</div>
+    </div>
+    <div class="kpi-card danger">
+      <div class="kpi-label">High Risk</div>
+      <div class="kpi-value">4</div>
+    </div>
+    <div class="kpi-card danger">
+      <div class="kpi-label">Orphans</div>
+      <div class="kpi-value">1</div>
+    </div>
+    <div class="kpi-card neutral">
+      <div class="kpi-label">Org-Scoped</div>
+      <div class="kpi-value">6</div>
+    </div>
+    <div class="kpi-card neutral">
+      <div class="kpi-label">User-Scoped</div>
+      <div class="kpi-value">1</div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════════════════════════════ -->
+  <!-- 3. CHARTS                                                        -->
+  <!-- ════════════════════════════════════════════════════════════════ -->
+  <div class="charts-row">
+    <div class="chart-card">
+      <h3>Scope Distribution</h3>
+      <div class="chart-wrap">
+        <canvas id="chartScope"></canvas>
+      </div>
+    </div>
+    <div class="chart-card">
+      <h3>Agents by Origin</h3>
+      <div class="chart-wrap">
+        <canvas id="chartOrigin"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════════════════════════════ -->
+  <!-- 4. RISK BANNER                                                   -->
+  <!-- ════════════════════════════════════════════════════════════════ -->
+  
+  <div class="risk-banner">
+    <span class="icon">&#x26A0;&#xFE0F;</span>
+    <div>
+      <strong>4 high-risk agents detected.</strong>
+      Review the flagged agents below and take remediation action.
+    </div>
+  </div>
+  
+
+  <!-- ════════════════════════════════════════════════════════════════ -->
+  <!-- 5. CONTROLS                                                      -->
+  <!-- ════════════════════════════════════════════════════════════════ -->
+  <div class="controls">
+    <input type="text" id="filterText" placeholder="&#x1F50D;  Search by name, publisher, type…" oninput="applyFilters()" />
+    <select id="filterOrigin" onchange="applyFilters()">
+      <option value="">All Origins</option>
+      <option value="agent_builder">Agent Builder</option>
+      <option value="sharepoint_agent">SharePoint Agent</option>
+      <option value="copilot_studio">Copilot Studio</option>
+      <option value="pro_code">Pro Code</option>
+      <option value="microsoft_prebuilt">Microsoft Prebuilt</option>
+      <option value="unknown">Unknown</option>
+    </select>
+    <select id="filterRisk" onchange="applyFilters()">
+      <option value="">All Risk Levels</option>
+      <option value="HIGH">High</option>
+      <option value="MEDIUM">Medium</option>
+      <option value="LOW">Low</option>
+      <option value="INFO">Info</option>
+      <option value="none">Clean</option>
+    </select>
+    <select id="filterScope" onchange="applyFilters()">
+      <option value="">All Scopes</option>
+      <option value="true">Org-Scoped</option>
+      <option value="false">User-Scoped</option>
+    </select>
+    <button class="btn-csv" onclick="exportCSV()">&#x2B73; Export CSV</button>
+  </div>
+
+  <!-- ════════════════════════════════════════════════════════════════ -->
+  <!-- 6. MAIN TABLE                                                    -->
+  <!-- ════════════════════════════════════════════════════════════════ -->
+  <div class="table-wrap">
+    <table id="agentTable">
+      <thead>
+        <tr>
+          <th onclick="sortTable(0)" data-col="0">Name <i class="sort-icon"></i></th>
+          <th onclick="sortTable(1)" data-col="1">Origin <i class="sort-icon"></i></th>
+          <th onclick="sortTable(2)" data-col="2">Type <i class="sort-icon"></i></th>
+          <th onclick="sortTable(3)" data-col="3">Scope <i class="sort-icon"></i></th>
+          <th onclick="sortTable(4)" data-col="4">Publisher <i class="sort-icon"></i></th>
+          <th onclick="sortTable(5)" data-col="5">Last Modified <i class="sort-icon"></i></th>
+          <th onclick="sortTable(6)" data-col="6">Risk <i class="sort-icon"></i></th>
+        </tr>
+      </thead>
+      <tbody id="tableBody">
+        <tr class="agent-row"
+            data-id="demo-001"
+            data-name="hr assistant"
+            data-origin="copilot_studio"
+            data-risk="HIGH"
+            data-scope="true"
+            data-publisher="contoso hr"
+            data-type="declarative"
+            onclick="toggleDetail('demo-001')">
+          <td class="name-cell">
+            HR Assistant
+            
+          </td>
+          <td>
+            <span class="badge" style="background:#ea580c">
+              Copilot Studio
+            </span>
+          </td>
+          <td>declarative</td>
+          <td>
+            
+              <span style="color:#2563eb;font-weight:600">&#x1F3E2; Org</span>
+            
+          </td>
+          <td>Contoso HR</td>
+          <td>2026-04-01</td>
+          <td>
+            
+              <span class="badge" style="background:#dc2626">
+                HIGH
+              </span>
+            
+          </td>
+        </tr>
+        <tr class="detail-row" id="detail-demo-001" style="display:none">
+          <td colspan="7">
+            <div class="detail-inner">
+              
+              <h4>Risk Flags (2)</h4>
+              <div class="flag-grid">
+                <div class="flag-row">
+                  <span class="badge f-rule" style="background:#dc2626">SENSITIVE_KNOWLEDGE</span>
+                  <span class="badge badge-outline f-rule" style="color:#ea580c;border-color:#ea580c">purview-inferred</span>
+                  <span class="f-msg">Agent accesses potentially over-broad knowledge sources: https://contoso.sharepoint.com/sites/HR/everyone</span>
+                </div>
+                <div class="flag-row">
+                  <span class="badge f-rule" style="background:#ea580c">ORIGIN_RISK</span>
+                  <span class="badge badge-outline f-rule" style="color:#16a34a;border-color:#16a34a">graph</span>
+                  <span class="f-msg">Agent was deployed via Copilot Studio — verify governance approval.</span>
+                </div>
+              </div>
+              
+              <h4>Knowledge Sources &nbsp;<small style="font-weight:400;text-transform:none;color:var(--muted)">last Purview activity: 2026-04-06</small></h4>
+              <div class="ks-list">
+                  <span class="ks-tag">https://contoso.sharepoint.com/sites/HR/everyone</span>
+              </div>
+            </div>
+          </td>
+        </tr>
+        <tr class="agent-row"
+            data-id="demo-002"
+            data-name="finance bot"
+            data-origin="copilot_studio"
+            data-risk="HIGH"
+            data-scope="true"
+            data-publisher="—"
+            data-type="declarative"
+            onclick="toggleDetail('demo-002')">
+          <td class="name-cell">
+            Finance Bot
+            
+          </td>
+          <td>
+            <span class="badge" style="background:#ea580c">
+              Copilot Studio
+            </span>
+          </td>
+          <td>declarative</td>
+          <td>
+            
+              <span style="color:#2563eb;font-weight:600">&#x1F3E2; Org</span>
+            
+          </td>
+          <td>—</td>
+          <td>2025-09-23</td>
+          <td>
+            
+              <span class="badge" style="background:#dc2626">
+                HIGH
+              </span>
+            
+          </td>
+        </tr>
+        <tr class="detail-row" id="detail-demo-002" style="display:none">
+          <td colspan="7">
+            <div class="detail-inner">
+              
+              <h4>Risk Flags (3)</h4>
+              <div class="flag-grid">
+                <div class="flag-row">
+                  <span class="badge f-rule" style="background:#ea580c">INACTIVE</span>
+                  <span class="badge badge-outline f-rule" style="color:#2563eb;border-color:#2563eb">purview</span>
+                  <span class="f-msg">Agent last active 110 days ago (threshold: 90 days).</span>
+                </div>
+                <div class="flag-row">
+                  <span class="badge f-rule" style="background:#dc2626">ORPHAN</span>
+                  <span class="badge badge-outline f-rule" style="color:#16a34a;border-color:#16a34a">graph</span>
+                  <span class="f-msg">Agent is shared org-wide but has no registered publisher / owner.</span>
+                </div>
+                <div class="flag-row">
+                  <span class="badge f-rule" style="background:#ea580c">ORIGIN_RISK</span>
+                  <span class="badge badge-outline f-rule" style="color:#16a34a;border-color:#16a34a">graph</span>
+                  <span class="f-msg">Agent was deployed via Copilot Studio — verify governance approval.</span>
+                </div>
+              </div>
+              
+              <h4>Knowledge Sources &nbsp;<small style="font-weight:400;text-transform:none;color:var(--muted)">last Purview activity: 2025-12-22</small></h4>
+              <div class="ks-list">
+                  <span class="ks-empty">No knowledge sources recorded in Purview audit.</span>
+              </div>
+            </div>
+          </td>
+        </tr>
+        <tr class="agent-row"
+            data-id="demo-003"
+            data-name="copilot"
+            data-origin="microsoft_prebuilt"
+            data-risk="INFO"
+            data-scope="true"
+            data-publisher="microsoft"
+            data-type="declarative"
+            onclick="toggleDetail('demo-003')">
+          <td class="name-cell">
+            Copilot
+            
+          </td>
+          <td>
+            <span class="badge" style="background:#16a34a">
+              Microsoft Prebuilt
+            </span>
+          </td>
+          <td>declarative</td>
+          <td>
+            
+              <span style="color:#2563eb;font-weight:600">&#x1F3E2; Org</span>
+            
+          </td>
+          <td>Microsoft</td>
+          <td>2026-03-12</td>
+          <td>
+            
+              <span class="badge" style="background:#6b7280">
+                INFO
+              </span>
+            
+          </td>
+        </tr>
+        <tr class="detail-row" id="detail-demo-003" style="display:none">
+          <td colspan="7">
+            <div class="detail-inner">
+              
+              <h4>Risk Flags (2)</h4>
+              <div class="flag-grid">
+                <div class="flag-row">
+                  <span class="badge f-rule" style="background:#6b7280">AGENT_NOT_AUDITED</span>
+                  <span class="badge badge-outline f-rule" style="color:#16a34a;border-color:#16a34a">graph</span>
+                  <span class="f-msg">Agent origin (microsoft_prebuilt) does not emit Purview audit records. Activity cannot be tracked via AuditLog.</span>
+                </div>
+                <div class="flag-row">
+                  <span class="badge f-rule" style="background:#6b7280">ORIGIN_RISK</span>
+                  <span class="badge badge-outline f-rule" style="color:#16a34a;border-color:#16a34a">graph</span>
+                  <span class="f-msg">Agent is a Microsoft prebuilt agent — low risk.</span>
+                </div>
+              </div>
+              
+              <h4>Knowledge Sources &nbsp;<small style="font-weight:400;text-transform:none;color:var(--muted)">last Purview activity: 2026-04-09</small></h4>
+              <div class="ks-list">
+                  <span class="ks-empty">No knowledge sources recorded in Purview audit.</span>
+              </div>
+            </div>
+          </td>
+        </tr>
+        <tr class="agent-row"
+            data-id="demo-004"
+            data-name="sales prospector"
+            data-origin="unknown"
+            data-risk="LOW"
+            data-scope="true"
+            data-publisher="contoso sales"
+            data-type="custom-engine"
+            onclick="toggleDetail('demo-004')">
+          <td class="name-cell">
+            Sales Prospector
+            
+          </td>
+          <td>
+            <span class="badge" style="background:#6b7280">
+              Unknown
+            </span>
+          </td>
+          <td>custom-engine</td>
+          <td>
+            
+              <span style="color:#2563eb;font-weight:600">&#x1F3E2; Org</span>
+            
+          </td>
+          <td>Contoso Sales</td>
+          <td>2026-03-27</td>
+          <td>
+            
+              <span class="badge" style="background:#ca8a04">
+                LOW
+              </span>
+            
+          </td>
+        </tr>
+        <tr class="detail-row" id="detail-demo-004" style="display:none">
+          <td colspan="7">
+            <div class="detail-inner">
+              
+              <h4>Risk Flags (1)</h4>
+              <div class="flag-grid">
+                <div class="flag-row">
+                  <span class="badge f-rule" style="background:#ca8a04">ORIGIN_RISK</span>
+                  <span class="badge badge-outline f-rule" style="color:#16a34a;border-color:#16a34a">graph</span>
+                  <span class="f-msg">Agent origin could not be determined from available metadata.</span>
+                </div>
+              </div>
+              
+              <h4>Knowledge Sources &nbsp;<small style="font-weight:400;text-transform:none;color:var(--muted)">last Purview activity: 2026-04-04</small></h4>
+              <div class="ks-list">
+                  <span class="ks-tag">https://contoso.sharepoint.com/sites/Sales</span>
+              </div>
+            </div>
+          </td>
+        </tr>
+        <tr class="agent-row"
+            data-id="demo-005"
+            data-name="personal study helper"
+            data-origin="agent_builder"
+            data-risk="HIGH"
+            data-scope="false"
+            data-publisher="alice martin"
+            data-type="declarative"
+            onclick="toggleDetail('demo-005')">
+          <td class="name-cell">
+            Personal Study Helper
+            
+          </td>
+          <td>
+            <span class="badge" style="background:#dc2626">
+              Agent Builder
+            </span>
+          </td>
+          <td>declarative</td>
+          <td>
+            
+              <span style="color:var(--muted)">&#x1F464; User</span>
+            
+          </td>
+          <td>Alice Martin</td>
+          <td>2026-02-25</td>
+          <td>
+            
+              <span class="badge" style="background:#dc2626">
+                HIGH
+              </span>
+            
+          </td>
+        </tr>
+        <tr class="detail-row" id="detail-demo-005" style="display:none">
+          <td colspan="7">
+            <div class="detail-inner">
+              
+              <h4>Risk Flags (3)</h4>
+              <div class="flag-grid">
+                <div class="flag-row">
+                  <span class="badge f-rule" style="background:#ea580c">INACTIVE</span>
+                  <span class="badge badge-outline f-rule" style="color:#2563eb;border-color:#2563eb">purview</span>
+                  <span class="f-msg">No Purview activity recorded for this agent (threshold: 90 days).</span>
+                </div>
+                <div class="flag-row">
+                  <span class="badge f-rule" style="background:#ca8a04">KNOWLEDGE_UNKNOWN</span>
+                  <span class="badge badge-outline f-rule" style="color:#6b7280;border-color:#6b7280">unavailable</span>
+                  <span class="f-msg">Knowledge sources could not be determined (no Purview audit data available for this agent).</span>
+                </div>
+                <div class="flag-row">
+                  <span class="badge f-rule" style="background:#dc2626">ORIGIN_RISK</span>
+                  <span class="badge badge-outline f-rule" style="color:#16a34a;border-color:#16a34a">graph</span>
+                  <span class="f-msg">Agent was created by an individual user via Agent Builder and shared org-wide.</span>
+                </div>
+              </div>
+              
+              <h4>Knowledge Sources</h4>
+              <div class="ks-list">
+                  <span class="ks-empty">No knowledge sources recorded in Purview audit.</span>
+              </div>
+            </div>
+          </td>
+        </tr>
+        <tr class="agent-row"
+            data-id="demo-006"
+            data-name="sharepoint news agent"
+            data-origin="sharepoint_agent"
+            data-risk="HIGH"
+            data-scope="true"
+            data-publisher="contoso it"
+            data-type="sharepoint"
+            onclick="toggleDetail('demo-006')">
+          <td class="name-cell">
+            SharePoint News Agent
+            
+          </td>
+          <td>
+            <span class="badge" style="background:#dc2626">
+              Sharepoint Agent
+            </span>
+          </td>
+          <td>sharepoint</td>
+          <td>
+            
+              <span style="color:#2563eb;font-weight:600">&#x1F3E2; Org</span>
+            
+          </td>
+          <td>Contoso IT</td>
+          <td>2026-02-10</td>
+          <td>
+            
+              <span class="badge" style="background:#dc2626">
+                HIGH
+              </span>
+            
+          </td>
+        </tr>
+        <tr class="detail-row" id="detail-demo-006" style="display:none">
+          <td colspan="7">
+            <div class="detail-inner">
+              
+              <h4>Risk Flags (4)</h4>
+              <div class="flag-grid">
+                <div class="flag-row">
+                  <span class="badge f-rule" style="background:#ea580c">INACTIVE</span>
+                  <span class="badge badge-outline f-rule" style="color:#2563eb;border-color:#2563eb">purview</span>
+                  <span class="f-msg">No Purview activity recorded for this agent (threshold: 90 days).</span>
+                </div>
+                <div class="flag-row">
+                  <span class="badge f-rule" style="background:#ca8a04">KNOWLEDGE_UNKNOWN</span>
+                  <span class="badge badge-outline f-rule" style="color:#6b7280;border-color:#6b7280">unavailable</span>
+                  <span class="f-msg">Knowledge sources could not be determined (no Purview audit data available for this agent).</span>
+                </div>
+                <div class="flag-row">
+                  <span class="badge f-rule" style="background:#6b7280">AGENT_NOT_AUDITED</span>
+                  <span class="badge badge-outline f-rule" style="color:#16a34a;border-color:#16a34a">graph</span>
+                  <span class="f-msg">Agent origin (sharepoint_agent) does not emit Purview audit records. Activity cannot be tracked via AuditLog.</span>
+                </div>
+                <div class="flag-row">
+                  <span class="badge f-rule" style="background:#dc2626">ORIGIN_RISK</span>
+                  <span class="badge badge-outline f-rule" style="color:#16a34a;border-color:#16a34a">graph</span>
+                  <span class="f-msg">Agent is a SharePoint-native agent — audit coverage is limited.</span>
+                </div>
+              </div>
+              
+              <h4>Knowledge Sources</h4>
+              <div class="ks-list">
+                  <span class="ks-empty">No knowledge sources recorded in Purview audit.</span>
+              </div>
+            </div>
+          </td>
+        </tr>
+        <tr class="agent-row"
+            data-id="demo-007"
+            data-name="blocked legacy bot"
+            data-origin="copilot_studio"
+            data-risk="MEDIUM"
+            data-scope="true"
+            data-publisher="contoso dev"
+            data-type="declarative"
+            onclick="toggleDetail('demo-007')">
+          <td class="name-cell">
+            Blocked Legacy Bot
+            <span class="blocked-chip">BLOCKED</span>
+          </td>
+          <td>
+            <span class="badge" style="background:#ea580c">
+              Copilot Studio
+            </span>
+          </td>
+          <td>declarative</td>
+          <td>
+            
+              <span style="color:#2563eb;font-weight:600">&#x1F3E2; Org</span>
+            
+          </td>
+          <td>Contoso Dev</td>
+          <td>2025-10-13</td>
+          <td>
+            
+              <span class="badge" style="background:#ea580c">
+                MEDIUM
+              </span>
+            
+          </td>
+        </tr>
+        <tr class="detail-row" id="detail-demo-007" style="display:none">
+          <td colspan="7">
+            <div class="detail-inner">
+              
+              <h4>Risk Flags (3)</h4>
+              <div class="flag-grid">
+                <div class="flag-row">
+                  <span class="badge f-rule" style="background:#ea580c">INACTIVE</span>
+                  <span class="badge badge-outline f-rule" style="color:#2563eb;border-color:#2563eb">purview</span>
+                  <span class="f-msg">No Purview activity recorded for this agent (threshold: 90 days).</span>
+                </div>
+                <div class="flag-row">
+                  <span class="badge f-rule" style="background:#ca8a04">KNOWLEDGE_UNKNOWN</span>
+                  <span class="badge badge-outline f-rule" style="color:#6b7280;border-color:#6b7280">unavailable</span>
+                  <span class="f-msg">Knowledge sources could not be determined (no Purview audit data available for this agent).</span>
+                </div>
+                <div class="flag-row">
+                  <span class="badge f-rule" style="background:#ea580c">ORIGIN_RISK</span>
+                  <span class="badge badge-outline f-rule" style="color:#16a34a;border-color:#16a34a">graph</span>
+                  <span class="f-msg">Agent was deployed via Copilot Studio — verify governance approval.</span>
+                </div>
+              </div>
+              
+              <h4>Knowledge Sources</h4>
+              <div class="ks-list">
+                  <span class="ks-empty">No knowledge sources recorded in Purview audit.</span>
+              </div>
+            </div>
+          </td>
+        </tr>
+        <tr class="no-results-row" style="display:none">
+          <td colspan="7" class="no-results">No agents match the current filters.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+</main>
+
+<!-- ════════════════════════════════════════════════════════════════ -->
+<!-- 8. FOOTER                                                        -->
+<!-- ════════════════════════════════════════════════════════════════ -->
+<footer>
+  <div style="margin-bottom:8px;">
+    <a href="https://ouithink.fr" target="_blank">
+      <img src="https://ouithink.fr/images/logo-ouithink.png"
+           alt="Ouithink" height="64" width="64"
+           style="opacity:.6;vertical-align:middle;" />
+    </a>
+  </div>
+  <span>Generated by <a href="https://github.com/damienmzr/copilotscan"
+        target="_blank">CopilotScan</a></span>
+  <span>·</span>
+  <span>Powered by <a href="https://ouithink.fr" target="_blank">ouithink.fr</a></span>
+  <span>·</span>
+  <span>2026-04-11 10:15 UTC</span>
+</footer>
+
+<!-- ════════════════════════════════════════════════════════════════ -->
+<!-- SCRIPTS                                                          -->
+<!-- ════════════════════════════════════════════════════════════════ -->
+<script>
+/* ── Agent data (injected by Jinja2) ── */
+const AGENTS = [{"agent_type": "declarative", "display_name": "HR Assistant", "element_types": ["DeclarativeAgent"], "flags": [{"color": "#dc2626", "data_source": "purview-inferred", "ds_color": "#ea580c", "level": "HIGH", "message_en": "Agent accesses potentially over-broad knowledge sources: https://contoso.sharepoint.com/sites/HR/everyone", "message_fr": "L\u0027agent acc\u00e8de \u00e0 des sources de connaissances potentiellement trop larges : https://contoso.sharepoint.com/sites/HR/everyone", "rule_id": "SENSITIVE_KNOWLEDGE"}, {"color": "#ea580c", "data_source": "graph", "ds_color": "#16a34a", "level": "MEDIUM", "message_en": "Agent was deployed via Copilot Studio \u2014 verify governance approval.", "message_fr": "L\u0027agent a \u00e9t\u00e9 d\u00e9ploy\u00e9 via Copilot Studio \u2014 v\u00e9rifiez l\u0027approbation de gouvernance.", "rule_id": "ORIGIN_RISK"}], "id": "demo-001", "is_blocked": false, "is_org_scoped": true, "knowledge_sources": ["https://contoso.sharepoint.com/sites/HR/everyone"], "last_interaction": "2026-04-06", "last_modified": "2026-04-01", "origin": "copilot_studio", "origin_color": "#ea580c", "publisher": "Contoso HR", "version": "1.0", "worst_color": "#dc2626", "worst_level": "HIGH"}, {"agent_type": "declarative", "display_name": "Finance Bot", "element_types": ["DeclarativeAgent"], "flags": [{"color": "#ea580c", "data_source": "purview", "ds_color": "#2563eb", "level": "MEDIUM", "message_en": "Agent last active 110 days ago (threshold: 90 days).", "message_fr": "Agent actif pour la derni\u00e8re fois il y a 110 jours (seuil : 90 jours).", "rule_id": "INACTIVE"}, {"color": "#dc2626", "data_source": "graph", "ds_color": "#16a34a", "level": "HIGH", "message_en": "Agent is shared org-wide but has no registered publisher / owner.", "message_fr": "L\u0027agent est partag\u00e9 \u00e0 l\u0027\u00e9chelle de l\u0027organisation mais ne poss\u00e8de pas de propri\u00e9taire enregistr\u00e9.", "rule_id": "ORPHAN"}, {"color": "#ea580c", "data_source": "graph", "ds_color": "#16a34a", "level": "MEDIUM", "message_en": "Agent was deployed via Copilot Studio \u2014 verify governance approval.", "message_fr": "L\u0027agent a \u00e9t\u00e9 d\u00e9ploy\u00e9 via Copilot Studio \u2014 v\u00e9rifiez l\u0027approbation de gouvernance.", "rule_id": "ORIGIN_RISK"}], "id": "demo-002", "is_blocked": false, "is_org_scoped": true, "knowledge_sources": [], "last_interaction": "2025-12-22", "last_modified": "2025-09-23", "origin": "copilot_studio", "origin_color": "#ea580c", "publisher": "\u2014", "version": "1.0", "worst_color": "#dc2626", "worst_level": "HIGH"}, {"agent_type": "declarative", "display_name": "Copilot", "element_types": ["DeclarativeAgent"], "flags": [{"color": "#6b7280", "data_source": "graph", "ds_color": "#16a34a", "level": "INFO", "message_en": "Agent origin (microsoft_prebuilt) does not emit Purview audit records. Activity cannot be tracked via AuditLog.", "message_fr": "L\u0027origine de l\u0027agent (microsoft_prebuilt) ne g\u00e9n\u00e8re pas d\u0027enregistrements d\u0027audit Purview. L\u0027activit\u00e9 ne peut pas \u00eatre suivie via AuditLog.", "rule_id": "AGENT_NOT_AUDITED"}, {"color": "#6b7280", "data_source": "graph", "ds_color": "#16a34a", "level": "INFO", "message_en": "Agent is a Microsoft prebuilt agent \u2014 low risk.", "message_fr": "L\u0027agent est un agent Microsoft pr\u00e9int\u00e9gr\u00e9 \u2014 risque faible.", "rule_id": "ORIGIN_RISK"}], "id": "demo-003", "is_blocked": false, "is_org_scoped": true, "knowledge_sources": [], "last_interaction": "2026-04-09", "last_modified": "2026-03-12", "origin": "microsoft_prebuilt", "origin_color": "#16a34a", "publisher": "Microsoft", "version": "1.0", "worst_color": "#6b7280", "worst_level": "INFO"}, {"agent_type": "custom-engine", "display_name": "Sales Prospector", "element_types": ["CustomEngineAgent"], "flags": [{"color": "#ca8a04", "data_source": "graph", "ds_color": "#16a34a", "level": "LOW", "message_en": "Agent origin could not be determined from available metadata.", "message_fr": "L\u0027origine de l\u0027agent n\u0027a pas pu \u00eatre d\u00e9termin\u00e9e \u00e0 partir des m\u00e9tadonn\u00e9es disponibles.", "rule_id": "ORIGIN_RISK"}], "id": "demo-004", "is_blocked": false, "is_org_scoped": true, "knowledge_sources": ["https://contoso.sharepoint.com/sites/Sales"], "last_interaction": "2026-04-04", "last_modified": "2026-03-27", "origin": "unknown", "origin_color": "#6b7280", "publisher": "Contoso Sales", "version": "1.0", "worst_color": "#ca8a04", "worst_level": "LOW"}, {"agent_type": "declarative", "display_name": "Personal Study Helper", "element_types": ["DeclarativeAgent"], "flags": [{"color": "#ea580c", "data_source": "purview", "ds_color": "#2563eb", "level": "MEDIUM", "message_en": "No Purview activity recorded for this agent (threshold: 90 days).", "message_fr": "Aucune activit\u00e9 Purview enregistr\u00e9e pour cet agent (seuil : 90 jours).", "rule_id": "INACTIVE"}, {"color": "#ca8a04", "data_source": "unavailable", "ds_color": "#6b7280", "level": "LOW", "message_en": "Knowledge sources could not be determined (no Purview audit data available for this agent).", "message_fr": "Les sources de connaissances n\u0027ont pas pu \u00eatre d\u00e9termin\u00e9es (aucune donn\u00e9e d\u0027audit Purview disponible pour cet agent).", "rule_id": "KNOWLEDGE_UNKNOWN"}, {"color": "#dc2626", "data_source": "graph", "ds_color": "#16a34a", "level": "HIGH", "message_en": "Agent was created by an individual user via Agent Builder and shared org-wide.", "message_fr": "L\u0027agent a \u00e9t\u00e9 cr\u00e9\u00e9 par un utilisateur individuel via Agent Builder et partag\u00e9 \u00e0 l\u0027organisation.", "rule_id": "ORIGIN_RISK"}], "id": "demo-005", "is_blocked": false, "is_org_scoped": false, "knowledge_sources": [], "last_interaction": "\u2014", "last_modified": "2026-02-25", "origin": "agent_builder", "origin_color": "#dc2626", "publisher": "Alice Martin", "version": "1.0", "worst_color": "#dc2626", "worst_level": "HIGH"}, {"agent_type": "sharepoint", "display_name": "SharePoint News Agent", "element_types": ["SharePointAgent"], "flags": [{"color": "#ea580c", "data_source": "purview", "ds_color": "#2563eb", "level": "MEDIUM", "message_en": "No Purview activity recorded for this agent (threshold: 90 days).", "message_fr": "Aucune activit\u00e9 Purview enregistr\u00e9e pour cet agent (seuil : 90 jours).", "rule_id": "INACTIVE"}, {"color": "#ca8a04", "data_source": "unavailable", "ds_color": "#6b7280", "level": "LOW", "message_en": "Knowledge sources could not be determined (no Purview audit data available for this agent).", "message_fr": "Les sources de connaissances n\u0027ont pas pu \u00eatre d\u00e9termin\u00e9es (aucune donn\u00e9e d\u0027audit Purview disponible pour cet agent).", "rule_id": "KNOWLEDGE_UNKNOWN"}, {"color": "#6b7280", "data_source": "graph", "ds_color": "#16a34a", "level": "INFO", "message_en": "Agent origin (sharepoint_agent) does not emit Purview audit records. Activity cannot be tracked via AuditLog.", "message_fr": "L\u0027origine de l\u0027agent (sharepoint_agent) ne g\u00e9n\u00e8re pas d\u0027enregistrements d\u0027audit Purview. L\u0027activit\u00e9 ne peut pas \u00eatre suivie via AuditLog.", "rule_id": "AGENT_NOT_AUDITED"}, {"color": "#dc2626", "data_source": "graph", "ds_color": "#16a34a", "level": "HIGH", "message_en": "Agent is a SharePoint-native agent \u2014 audit coverage is limited.", "message_fr": "L\u0027agent est natif SharePoint \u2014 la couverture d\u0027audit est limit\u00e9e.", "rule_id": "ORIGIN_RISK"}], "id": "demo-006", "is_blocked": false, "is_org_scoped": true, "knowledge_sources": [], "last_interaction": "\u2014", "last_modified": "2026-02-10", "origin": "sharepoint_agent", "origin_color": "#dc2626", "publisher": "Contoso IT", "version": "1.0", "worst_color": "#dc2626", "worst_level": "HIGH"}, {"agent_type": "declarative", "display_name": "Blocked Legacy Bot", "element_types": ["DeclarativeAgent"], "flags": [{"color": "#ea580c", "data_source": "purview", "ds_color": "#2563eb", "level": "MEDIUM", "message_en": "No Purview activity recorded for this agent (threshold: 90 days).", "message_fr": "Aucune activit\u00e9 Purview enregistr\u00e9e pour cet agent (seuil : 90 jours).", "rule_id": "INACTIVE"}, {"color": "#ca8a04", "data_source": "unavailable", "ds_color": "#6b7280", "level": "LOW", "message_en": "Knowledge sources could not be determined (no Purview audit data available for this agent).", "message_fr": "Les sources de connaissances n\u0027ont pas pu \u00eatre d\u00e9termin\u00e9es (aucune donn\u00e9e d\u0027audit Purview disponible pour cet agent).", "rule_id": "KNOWLEDGE_UNKNOWN"}, {"color": "#ea580c", "data_source": "graph", "ds_color": "#16a34a", "level": "MEDIUM", "message_en": "Agent was deployed via Copilot Studio \u2014 verify governance approval.", "message_fr": "L\u0027agent a \u00e9t\u00e9 d\u00e9ploy\u00e9 via Copilot Studio \u2014 v\u00e9rifiez l\u0027approbation de gouvernance.", "rule_id": "ORIGIN_RISK"}], "id": "demo-007", "is_blocked": true, "is_org_scoped": true, "knowledge_sources": [], "last_interaction": "\u2014", "last_modified": "2025-10-13", "origin": "copilot_studio", "origin_color": "#ea580c", "publisher": "Contoso Dev", "version": "1.0", "worst_color": "#ea580c", "worst_level": "MEDIUM"}];
+
+/* ──────────────────────────────────────
+   Chart.js — Scope Doughnut
+────────────────────────────────────── */
+(function () {
+  const shared  = 6;
+  const private_ = 1;
+  new Chart(document.getElementById('chartScope'), {
+    type: 'doughnut',
+    data: {
+      labels: ['Org-Scoped', 'User-Scoped'],
+      datasets: [{
+        data: [shared, private_],
+        backgroundColor: ['#3b82f6', '#94a3b8'],
+        borderWidth: 2,
+        borderColor: '#fff',
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'bottom', labels: { font: { size: 12 }, padding: 12 } },
+        tooltip: { callbacks: { label: ctx => ` ${ctx.parsed} agents` } }
+      },
+      cutout: '60%',
+    }
+  });
+})();
+
+/* ──────────────────────────────────────
+   Chart.js — Origin Bar
+────────────────────────────────────── */
+(function () {
+  const originMap = {"agent_builder": 1, "copilot_studio": 3, "microsoft_prebuilt": 1, "sharepoint_agent": 1, "unknown": 1};
+  const labelMap = {
+    agent_builder:      'Agent Builder',
+    sharepoint_agent:   'SharePoint',
+    copilot_studio:     'Copilot Studio',
+    pro_code:           'Pro Code',
+    microsoft_prebuilt: 'MS Prebuilt',
+    unknown:            'Unknown',
+  };
+  const colorMap = {
+    agent_builder:      '#dc2626',
+    sharepoint_agent:   '#dc2626',
+    copilot_studio:     '#ea580c',
+    pro_code:           '#ea580c',
+    microsoft_prebuilt: '#16a34a',
+    unknown:            '#6b7280',
+  };
+  const keys   = Object.keys(originMap);
+  const labels = keys.map(k => labelMap[k] || k);
+  const values = keys.map(k => originMap[k]);
+  const colors = keys.map(k => colorMap[k] || '#6b7280');
+
+  new Chart(document.getElementById('chartOrigin'), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Agents',
+        data: values,
+        backgroundColor: colors,
+        borderRadius: 4,
+        borderSkipped: false,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: ctx => ` ${ctx.parsed.y} agents` } }
+      },
+      scales: {
+        y: { beginAtZero: true, ticks: { stepSize: 1, font: { size: 11 } }, grid: { color: '#f1f5f9' } },
+        x: { ticks: { font: { size: 11 } }, grid: { display: false } }
+      }
+    }
+  });
+})();
+
+/* ──────────────────────────────────────
+   Expand / collapse detail row
+────────────────────────────────────── */
+function toggleDetail(id) {
+  const detail = document.getElementById('detail-' + id);
+  if (!detail) return;
+  const agentRow = detail.previousElementSibling;
+  const isOpen = detail.style.display !== 'none';
+  detail.style.display = isOpen ? 'none' : '';
+  if (agentRow) agentRow.classList.toggle('expanded', !isOpen);
+}
+
+/* ──────────────────────────────────────
+   Sorting
+────────────────────────────────────── */
+let sortCol = -1, sortAsc = true;
+
+function sortTable(col) {
+  const tbody   = document.getElementById('tableBody');
+  const headers = document.querySelectorAll('thead th');
+
+  if (sortCol === col) sortAsc = !sortAsc;
+  else { sortCol = col; sortAsc = true; }
+
+  headers.forEach((h, i) => {
+    h.classList.remove('asc', 'desc');
+    if (i === col) h.classList.add(sortAsc ? 'asc' : 'desc');
+  });
+
+  // Collect (agentRow, detailRow) pairs
+  const rows = [];
+  const allRows = Array.from(tbody.querySelectorAll('tr.agent-row'));
+  allRows.forEach(r => {
+    const detail = document.getElementById('detail-' + r.dataset.id);
+    rows.push({ agent: r, detail });
+  });
+
+  rows.sort((a, b) => {
+    const va = a.agent.cells[col]?.textContent.trim().toLowerCase() || '';
+    const vb = b.agent.cells[col]?.textContent.trim().toLowerCase() || '';
+    return sortAsc ? va.localeCompare(vb) : vb.localeCompare(va);
+  });
+
+  rows.forEach(({ agent, detail }) => {
+    tbody.appendChild(agent);
+    if (detail) tbody.appendChild(detail);
+  });
+}
+
+/* ──────────────────────────────────────
+   Filtering
+────────────────────────────────────── */
+function applyFilters() {
+  const text   = document.getElementById('filterText').value.toLowerCase();
+  const origin = document.getElementById('filterOrigin').value;
+  const risk   = document.getElementById('filterRisk').value;
+  const scope  = document.getElementById('filterScope').value;
+
+  let visible = 0;
+  document.querySelectorAll('tr.agent-row').forEach(row => {
+    const matchText  = !text   || row.dataset.name.includes(text) || row.dataset.publisher.includes(text) || row.dataset.type.includes(text);
+    const matchOrigin= !origin || row.dataset.origin === origin;
+    const matchRisk  = !risk   || row.dataset.risk   === risk;
+    const matchScope = !scope  || row.dataset.scope  === scope;
+    const show = matchText && matchOrigin && matchRisk && matchScope;
+
+    row.style.display = show ? '' : 'none';
+    const detail = document.getElementById('detail-' + row.dataset.id);
+    if (detail && !show) detail.style.display = 'none';
+    if (show) visible++;
+  });
+
+  const noResults = document.querySelector('.no-results-row');
+  if (noResults) noResults.style.display = visible === 0 ? '' : 'none';
+}
+
+/* ──────────────────────────────────────
+   CSV Export
+────────────────────────────────────── */
+function exportCSV() {
+  const RISK_ORDER = ['HIGH', 'MEDIUM', 'LOW', 'INFO', 'none'];
+  const headers = ['ID', 'Name', 'Type', 'Origin', 'Scope', 'Publisher', 'Version',
+                   'Last Modified', 'Last Interaction', 'Worst Risk', 'Flags', 'Knowledge Sources'];
+
+  const rows = AGENTS.map(a => [
+    a.id,
+    a.display_name,
+    a.agent_type,
+    a.origin,
+    a.is_org_scoped ? 'Org' : 'User',
+    a.publisher,
+    a.version,
+    a.last_modified,
+    a.last_interaction,
+    a.worst_level,
+    a.flags.map(f => f.rule_id).join('; '),
+    a.knowledge_sources.join('; '),
+  ]);
+
+  const escape = v => '"' + String(v).replace(/"/g, '""') + '"';
+  const csv    = [headers, ...rows].map(r => r.map(escape).join(',')).join('\r\n');
+  const blob   = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+  const url    = URL.createObjectURL(blob);
+  const link   = document.createElement('a');
+  link.href     = url;
+  link.download = 'copilotscan_Demo_Tenant_2026-04-11_1015_UTC.csv';
+  link.click();
+  URL.revokeObjectURL(url);
+}
+</script>
+</body>
+</html>

@@ -90,7 +90,14 @@ def cli(
     elif flow == "device_code":
         cfg_mode = "device-code"
 
-    effective_output: str = output or report_cfg.get("output_path", "copilotscan_report.html")
+    _default_output = report_cfg.get("output_path", "copilotscan_report.html")
+    scan_date = datetime.now(timezone.utc)
+    if output:
+        effective_output: str = output
+    else:
+        _ts = scan_date.strftime("%Y%m%d_%H%M%S")
+        _p = Path(_default_output)
+        effective_output = str(_p.with_name(f"{_p.stem}_{_ts}{_p.suffix}"))
     effective_inactivity: int = (
         inactivity_days if inactivity_days is not None else scan_cfg.get("inactivity_days", 90)
     )
@@ -112,7 +119,7 @@ def cli(
         try:
             rg = ReportGenerator(
                 tenant_name=tenant_name if tenant_name and tenant_name != auth_cfg.get("tenant_id") else "Demo Tenant",
-                scan_date=datetime.now(timezone.utc),
+                scan_date=scan_date,
                 agents=agents,
             )
             rg.generate(effective_output)
@@ -213,7 +220,7 @@ def cli(
     try:
         rg = ReportGenerator(
             tenant_name=tenant_name,
-            scan_date=datetime.now(timezone.utc),
+            scan_date=scan_date,
             agents=agents,
         )
         rg.generate(effective_output)
