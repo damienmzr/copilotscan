@@ -99,10 +99,16 @@ class GraphCollector:
         if me_resp.status_code == 401:
             raise RuntimeError("Preflight: token is invalid or expired (HTTP 401 on /v1.0/me).")
         if not me_resp.ok:
-            logger.warning("Preflight: /v1.0/me returned %d – continuing anyway.", me_resp.status_code)
+            logger.warning(
+                "Preflight: /v1.0/me returned %d – continuing anyway.", me_resp.status_code
+            )
         else:
             me = me_resp.json()
-            logger.info("Preflight: signed in as %s (%s)", me.get("displayName"), me.get("userPrincipalName"))
+            logger.info(
+                "Preflight: signed in as %s (%s)",
+                me.get("displayName"),
+                me.get("userPrincipalName"),
+            )
 
         # ── 2. Role check ─────────────────────────────────────────────
         roles_resp = self._session.get(
@@ -125,7 +131,8 @@ class GraphCollector:
                 logger.warning(
                     "Preflight: signed-in account does not appear to hold "
                     "Global Administrator or Copilot Administrator role. "
-                    "Roles found: %s", role_names or ["(none)"]
+                    "Roles found: %s",
+                    role_names or ["(none)"],
                 )
         else:
             logger.warning("Preflight: could not retrieve roles (HTTP %d).", roles_resp.status_code)
@@ -146,11 +153,12 @@ class GraphCollector:
         has_copilot_sku = False
         if skus_resp.ok:
             skus = skus_resp.json().get("value", [])
-            enabled_skus = [s["skuPartNumber"] for s in skus if s.get("capabilityStatus") == "Enabled"]
+            enabled_skus = [
+                s["skuPartNumber"] for s in skus if s.get("capabilityStatus") == "Enabled"
+            ]
             logger.info("Preflight: enabled tenant SKUs: %s", enabled_skus)
             has_copilot_sku = any(
-                any(kw in sku.lower() for kw in COPILOT_SKU_PARTS)
-                for sku in enabled_skus
+                any(kw in sku.lower() for kw in COPILOT_SKU_PARTS) for sku in enabled_skus
             )
             if not has_copilot_sku:
                 logger.warning(

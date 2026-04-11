@@ -37,7 +37,9 @@ _AUTH_MODE_MAP = {
     "--no-purview", is_flag=True, default=False, help="Skip Purview audit log collection."
 )
 @click.option(
-    "--demo", is_flag=True, default=False,
+    "--demo",
+    is_flag=True,
+    default=False,
     help="Use synthetic demo agents (no auth/Graph required). Useful on tenants without an M365 Copilot licence.",
 )
 @click.option(
@@ -102,23 +104,25 @@ def cli(
         inactivity_days if inactivity_days is not None else scan_cfg.get("inactivity_days", 90)
     )
     include_purview: bool = (not no_purview) and scan_cfg.get("include_purview", True)
-    tenant_name: str = (
-        report_cfg.get("tenant_name") or auth_cfg.get("tenant_id", "Unknown Tenant")
-    )
+    tenant_name: str = report_cfg.get("tenant_name") or auth_cfg.get("tenant_id", "Unknown Tenant")
 
     # ── Demo mode (no auth, no Graph) ─────────────────────────────────
     if demo:
         agents = _build_demo_agents()
         click.echo(f"🎭  Demo mode — {len(agents)} synthetic agent(s) loaded (no Graph call made).")
         from copilotscan.risk_engine import evaluate_all  # noqa: PLC0415
+
         agents = evaluate_all(agents, inactivity_days=effective_inactivity)
         total_flags = sum(len(a.risk_flags) for a in agents)
         click.echo(f"⚙️   Risk evaluation: {total_flags} flag(s) across {len(agents)} agent(s).")
         from copilotscan.report_generator import ReportGenerator  # noqa: PLC0415
+
         click.echo(f"📄  Generating report → {effective_output}")
         try:
             rg = ReportGenerator(
-                tenant_name=tenant_name if tenant_name and tenant_name != auth_cfg.get("tenant_id") else "Demo Tenant",
+                tenant_name=tenant_name
+                if tenant_name and tenant_name != auth_cfg.get("tenant_id")
+                else "Demo Tenant",
                 scan_date=scan_date,
                 agents=agents,
             )
@@ -132,17 +136,15 @@ def cli(
     # ── Authenticate ──────────────────────────────────────────────────
     from copilotscan.auth import (  # noqa: PLC0415
         AuthConfig,
+        AuthConfigError,
         AuthMode,
         CopilotScanAuthenticator,
-        AuthConfigError,
     )
 
     mode_enum = AuthMode(cfg_mode)  # "device-code" etc. match AuthMode values
 
     cert_path_val = auth_cfg.get("cert_path")
-    cert_path_resolved = (
-        Path(cert_path_val).expanduser().resolve() if cert_path_val else None
-    )
+    cert_path_resolved = Path(cert_path_val).expanduser().resolve() if cert_path_val else None
 
     try:
         auth_config = AuthConfig(
@@ -235,15 +237,27 @@ def cli(
 # Demo helpers
 # ---------------------------------------------------------------------------
 
+
 def _build_demo_agents():
     """Return a representative set of synthetic Agent objects for offline testing."""
     from datetime import timedelta
+
     from copilotscan.models import Agent  # noqa: PLC0415
 
     now = datetime.now(timezone.utc)
 
-    def _agent(agent_id, name, element_types, agent_type, publisher_name, available_to_type,
-               days_modified, purview_days=None, knowledge_sources=None, is_blocked=False):
+    def _agent(
+        agent_id,
+        name,
+        element_types,
+        agent_type,
+        publisher_name,
+        available_to_type,
+        days_modified,
+        purview_days=None,
+        knowledge_sources=None,
+        is_blocked=False,
+    ):
         last_modified = now - timedelta(days=days_modified)
         purview_ts = (now - timedelta(days=purview_days)) if purview_days is not None else None
         publisher = {"displayName": publisher_name} if publisher_name else None
@@ -266,13 +280,84 @@ def _build_demo_agents():
         return a
 
     return [
-        _agent("demo-001", "HR Assistant",           ["DeclarativeAgent"],  "declarative",  "Contoso HR",  "organization", days_modified=10,  purview_days=5,   knowledge_sources=["https://contoso.sharepoint.com/sites/HR/everyone"]),
-        _agent("demo-002", "Finance Bot",            ["DeclarativeAgent"],  "declarative",  None,          "organization", days_modified=200, purview_days=110, knowledge_sources=[]),
-        _agent("demo-003", "Copilot",                ["DeclarativeAgent"],  "declarative",  "Microsoft",   "organization", days_modified=30,  purview_days=2,   knowledge_sources=[]),
-        _agent("demo-004", "Sales Prospector",       ["CustomEngineAgent"], "custom-engine","Contoso Sales","organization", days_modified=15,  purview_days=7,   knowledge_sources=["https://contoso.sharepoint.com/sites/Sales"]),
-        _agent("demo-005", "Personal Study Helper",  ["DeclarativeAgent"],  "declarative",  "Alice Martin", None,          days_modified=45,  purview_days=None,knowledge_sources=[]),
-        _agent("demo-006", "SharePoint News Agent",  ["SharePointAgent"],   "sharepoint",   "Contoso IT",  "organization", days_modified=60,  purview_days=None,knowledge_sources=[]),
-        _agent("demo-007", "Blocked Legacy Bot",     ["DeclarativeAgent"],  "declarative",  "Contoso Dev", "organization", days_modified=180, purview_days=None,knowledge_sources=[], is_blocked=True),
+        _agent(
+            "demo-001",
+            "HR Assistant",
+            ["DeclarativeAgent"],
+            "declarative",
+            "Contoso HR",
+            "organization",
+            days_modified=10,
+            purview_days=5,
+            knowledge_sources=["https://contoso.sharepoint.com/sites/HR/everyone"],
+        ),
+        _agent(
+            "demo-002",
+            "Finance Bot",
+            ["DeclarativeAgent"],
+            "declarative",
+            None,
+            "organization",
+            days_modified=200,
+            purview_days=110,
+            knowledge_sources=[],
+        ),
+        _agent(
+            "demo-003",
+            "Copilot",
+            ["DeclarativeAgent"],
+            "declarative",
+            "Microsoft",
+            "organization",
+            days_modified=30,
+            purview_days=2,
+            knowledge_sources=[],
+        ),
+        _agent(
+            "demo-004",
+            "Sales Prospector",
+            ["CustomEngineAgent"],
+            "custom-engine",
+            "Contoso Sales",
+            "organization",
+            days_modified=15,
+            purview_days=7,
+            knowledge_sources=["https://contoso.sharepoint.com/sites/Sales"],
+        ),
+        _agent(
+            "demo-005",
+            "Personal Study Helper",
+            ["DeclarativeAgent"],
+            "declarative",
+            "Alice Martin",
+            None,
+            days_modified=45,
+            purview_days=None,
+            knowledge_sources=[],
+        ),
+        _agent(
+            "demo-006",
+            "SharePoint News Agent",
+            ["SharePointAgent"],
+            "sharepoint",
+            "Contoso IT",
+            "organization",
+            days_modified=60,
+            purview_days=None,
+            knowledge_sources=[],
+        ),
+        _agent(
+            "demo-007",
+            "Blocked Legacy Bot",
+            ["DeclarativeAgent"],
+            "declarative",
+            "Contoso Dev",
+            "organization",
+            days_modified=180,
+            purview_days=None,
+            knowledge_sources=[],
+            is_blocked=True,
+        ),
     ]
 
 
