@@ -73,6 +73,24 @@ Data source reliability labels used in the report:
 
 ---
 
+## Requirements
+
+### Microsoft 365 Licence
+
+> ⚠️ **The agent catalog endpoint requires a Microsoft 365 Copilot enterprise licence.**
+>
+> The `/beta/copilot/admin/catalog/packages` endpoint is **not available** with:
+> - Microsoft 365 Copilot for Business (SMB/PME version)
+> - Microsoft 365 Business Basic / Standard / Premium without Copilot add-on
+>
+> **Required:** Microsoft 365 E3 or E5 **+** Microsoft 365 Copilot add-on licence (enterprise).
+>
+> If your tenant returns `HTTP 403`, verify your licence in the Microsoft 365 admin center
+> under **Billing > Licences**. If the licence is correct, the endpoint GA rollout
+> (expected early May 2026) may not yet be active on your tenant — retry after May 1, 2026.
+
+---
+
 ## Quickstart
 
 ### Prerequisites
@@ -85,6 +103,9 @@ Data source reliability labels used in the report:
 | Global Admin | Required **once only** to grant admin consent |
 
 ### 1 — Install
+
+> **Licence required:** Microsoft 365 Copilot (enterprise — E3/E5 + Copilot add-on).
+> M365 Copilot for Business is not supported by the agent catalog API.
 
 ```bash
 pip install copilotscan
@@ -200,6 +221,7 @@ Full setup: [docs/app-registration.md](docs/app-registration.md)
 | Purview covers Copilot Studio agents only | Microsoft prebuilt and SharePoint agents show `AGENT_NOT_AUDITED` |
 | Purview query latency: 7 min to 3h+ | Configurable polling timeout (default: 30 min) |
 | GA rollout in progress (full GA expected early May 2026) | 403 errors possible on some tenants |
+| Microsoft 365 Copilot for Business (SMB) not supported | The `/catalog/packages` endpoint requires the enterprise Copilot licence (E3/E5 + add-on). M365 Copilot for Business returns `403 Forbidden`. |
 
 Full reference: [docs/technical-reference.md](docs/technical-reference.md)
 
