@@ -111,6 +111,18 @@
     /* ── Footer ── */
     footer { text-align: center; padding: 24px 0 32px; color: var(--muted); font-size: 12px; }
     footer span { margin: 0 6px; }
+
+    /* ── Capability dropdown ── */
+    .cap-dropdown { position: relative; }
+    .cap-dropdown-btn { padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; background: var(--surface); cursor: pointer; outline: none; white-space: nowrap; display: flex; align-items: center; gap: 6px; color: var(--text); }
+    .cap-dropdown-btn:hover, .cap-dropdown-btn.active { border-color: var(--accent); background: #f0fdf9; }
+    .cap-dropdown-menu { position: absolute; top: calc(100% + 4px); left: 0; z-index: 200; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 20px rgba(0,0,0,.14); padding: 10px 8px; min-width: 210px; }
+    .cap-group-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); padding: 4px 6px 3px; }
+    .cap-item { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 5px; cursor: pointer; font-size: 12.5px; user-select: none; }
+    .cap-item:hover { background: #f1f5f9; }
+    .cap-item input[type=checkbox] { cursor: pointer; accent-color: var(--accent); width: 14px; height: 14px; }
+    .btn-reset { padding: 7px 12px; background: transparent; color: var(--muted); border: 1px solid var(--border); border-radius: 6px; font-size: 12px; cursor: pointer; transition: all .15s; white-space: nowrap; }
+    .btn-reset:hover { border-color: var(--red); color: var(--red); }
   </style>
 </head>
 <body>
@@ -225,6 +237,24 @@
       <option value="true">Org-Scoped</option>
       <option value="false">User-Scoped</option>
     </select>
+    <div class="cap-dropdown" id="capDropdown">
+      <button type="button" class="cap-dropdown-btn" id="capDropdownBtn" onclick="toggleCapDropdown()">
+        🔍 Capabilities <span id="capCount" style="background:var(--accent);color:#fff;border-radius:99px;padding:1px 7px;font-size:11px;font-weight:700"></span> <span style="opacity:.5;font-size:10px">▾</span>
+      </button>
+      <div class="cap-dropdown-menu" id="capMenu" style="display:none">
+        <div class="cap-group-label">📊 Data Sources</div>
+        <label class="cap-item"><input type="checkbox" value="websearch" onchange="applyFilters()"> 🌐 Web Search</label>
+        <label class="cap-item"><input type="checkbox" value="onedriveandsharepoint" onchange="applyFilters()"> 📁 OneDrive / SharePoint</label>
+        <label class="cap-item"><input type="checkbox" value="graphconnectors" onchange="applyFilters()"> 🔗 Graph Connectors</label>
+        <div class="cap-group-label" style="margin-top:8px">✨ Agent Skills</div>
+        <label class="cap-item"><input type="checkbox" value="graphicart" onchange="applyFilters()"> 🎨 Génération d’images</label>
+        <label class="cap-item"><input type="checkbox" value="codeinterpreter" onchange="applyFilters()"> 💻 Code Interpreter</label>
+        <div style="border-top:1px solid var(--border);margin-top:8px;padding-top:8px">
+          <button type="button" onclick="resetCapFilter()" style="font-size:11px;color:var(--muted);background:none;border:none;cursor:pointer;padding:2px 4px">✕ Effacer la sélection</button>
+        </div>
+      </div>
+    </div>
+    <button class="btn-reset" onclick="resetFilters()">↺ Réinitialiser</button>
     <button class="btn-csv" onclick="exportCSV()">&#x2B73; Export CSV</button>
   </div>
 
@@ -254,6 +284,7 @@
             data-scope="{{ agent.is_org_scoped | lower }}"
             data-publisher="{{ agent.publisher | lower }}"
             data-type="{{ agent.agent_type | lower }}"
+            data-capability="{{ agent.graph_capabilities | map(attribute='name') | map('lower') | join(',') }}"
             onclick="toggleDetail('{{ agent.id }}')">
           <td class="name-cell">
             {{ agent.display_name }}
@@ -287,6 +318,24 @@
         <tr class="detail-row" id="detail-{{ agent.id }}" style="display:none">
           <td colspan="7">
             <div class="detail-inner">
+              <!-- Agent metadata row -->
+              <div style="display:flex;flex-wrap:wrap;gap:16px;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid #e2e8f0">
+                {% if agent.platform and agent.platform != '—' %}
+                <div><span style="font-size:0.75rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)">Platform</span><br><strong>{{ agent.platform }}</strong></div>
+                {% endif %}
+                {% if agent.creator_upn and agent.creator_upn != '—' %}
+                <div><span style="font-size:0.75rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)">Créateur</span><br><strong style="font-family:monospace;font-size:0.85rem">{{ agent.creator_upn }}</strong></div>
+                {% endif %}
+                <div><span style="font-size:0.75rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)">Version</span><br><strong>{{ agent.version }}</strong></div>
+                <div><span style="font-size:0.75rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)">Last Modified</span><br><strong>{{ agent.last_modified }}</strong></div>
+                {% if agent.last_interaction != '—' %}
+                <div><span style="font-size:0.75rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)">Last Purview Activity</span><br><strong>{{ agent.last_interaction }}</strong></div>
+                {% endif %}
+                <div><span style="font-size:0.75rem;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)">ID</span><br><code style="font-size:0.78rem;color:var(--muted)">{{ agent.id }}</code></div>
+              </div>
+              {% if agent.short_description and agent.short_description != '—' %}
+              <p style="margin:0 0 14px;color:var(--muted);font-style:italic;font-size:0.9rem">{{ agent.short_description }}</p>
+              {% endif %}
               {% if agent.flags %}
               <h4>Risk Flags ({{ agent.flags | length }})</h4>
               <div class="flag-grid">
@@ -299,16 +348,89 @@
                 {%- endfor %}
               </div>
               {% endif %}
-              <h4>Knowledge Sources{% if agent.last_interaction != '—' %} &nbsp;<small style="font-weight:400;text-transform:none;color:var(--muted)">last Purview activity: {{ agent.last_interaction }}</small>{% endif %}</h4>
+              <h4>Sources observées <small style="font-weight:400;text-transform:none;color:var(--muted)" title="Données issues des logs d'audit Microsoft Purview — sources que cet agent a réellement interrogées lors de conversations.">📋 Purview audit <span style="cursor:help;border-bottom:1px dashed var(--muted)">(?)</span></small></h4>
               <div class="ks-list">
                 {%- if agent.knowledge_sources %}
                   {%- for ks in agent.knowledge_sources %}
                   <span class="ks-tag">{{ ks }}</span>
                   {%- endfor %}
                 {%- else %}
-                  <span class="ks-empty">No knowledge sources recorded in Purview audit.</span>
+                  <span class="ks-empty" title="Aucun accès à une source de connaissance journalisé par Purview sur la période scannée — ne signifie pas que l'agent n'a pas de sources configurées.">Aucune source journalisée dans Purview sur la période.</span>
                 {%- endif %}
               </div>
+              {%- if agent.graph_instructions %}
+              <h4>Instructions <small style="font-weight:400;text-transform:none;color:var(--muted)">(from agent manifest)</small></h4>
+              <pre style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:10px;font-size:0.82rem;white-space:pre-wrap;word-break:break-word;max-height:200px;overflow-y:auto">{{ agent.graph_instructions }}</pre>
+              {%- endif %}
+              {%- if agent.graph_conversation_starters %}
+              <h4>Conversation Starters</h4>
+              <div class="ks-list">
+                {%- for cs in agent.graph_conversation_starters %}
+                <span class="ks-tag">{{ cs.text | default(cs | string) }}</span>
+                {%- endfor %}
+              </div>
+              {%- endif %}
+              {%- if agent.graph_actions %}
+              <h4>Actions <small style="font-weight:400;text-transform:none;color:var(--muted)">({{ agent.graph_actions | length }})</small></h4>
+              <div class="ks-list">
+                {%- for action in agent.graph_actions %}
+                <span class="ks-tag">{{ action.type | default('') }} {{ action.id | default(action | string) }}</span>
+                {%- endfor %}
+              </div>
+              {%- endif %}
+              {%- if agent.graph_capabilities %}
+              {%- set data_sources = [] %}
+              {%- set tools = [] %}
+              {%- for cap in agent.graph_capabilities %}
+                {%- if cap.name in ('WebSearch', 'OneDriveAndSharePoint', 'GraphConnectors') %}
+                  {%- set _ = data_sources.append(cap) %}
+                {%- else %}
+                  {%- set _ = tools.append(cap) %}
+                {%- endif %}
+              {%- endfor %}
+              {%- if data_sources %}
+              <h4>Data Sources <small style="font-weight:400;text-transform:none;color:var(--muted)">(from agent manifest)</small></h4>
+              {%- for cap in data_sources %}
+                {%- set cap_name = cap.name | default('Unknown') %}
+                {%- if cap_name == 'WebSearch' %}{%- set cap_color = '#2563eb' %}
+                {%- elif cap_name == 'OneDriveAndSharePoint' %}{%- set cap_color = '#16a34a' %}
+                {%- else %}{%- set cap_color = '#7c3aed' %}{%- endif %}
+                <div style="display:flex;align-items:flex-start;gap:10px;margin-bottom:8px;flex-wrap:wrap">
+                  <span class="badge" style="background:{{ cap_color }};min-width:160px;text-align:center">{{ cap_name }}</span>
+                  <div style="display:flex;flex-wrap:wrap;gap:6px;flex:1">
+                    {%- if cap_name == 'WebSearch' %}
+                      {%- if cap.sites %}
+                        {%- for site in cap.sites %}
+                        <a href="{{ site.url }}" target="_blank" class="ks-tag" style="text-decoration:none;color:inherit">🌐 {{ site.url }}</a>
+                        {%- endfor %}
+                      {%- else %}<span class="ks-tag">All web</span>{%- endif %}
+                    {%- elif cap_name == 'OneDriveAndSharePoint' %}
+                      {%- for item in (cap.items_by_url or []) %}
+                      <a href="{{ item.url }}" target="_blank" class="ks-tag" style="text-decoration:none;color:inherit" title="{{ item.name | default('') }}">📁 {{ item.name | default(item.url) }}</a>
+                      {%- endfor %}
+                      {%- for item in (cap.items_by_sharepoint_ids or []) %}
+                      <span class="ks-tag" title="site: {{ item.site_id | default('?') }} / list: {{ item.list_id | default('?') }}">📄 {{ item.unique_id | default(item.list_id | default(item.site_id | default('?'))) }}</span>
+                      {%- endfor %}
+                    {%- else %}
+                      <span class="ks-tag">{{ cap | string }}</span>
+                    {%- endif %}
+                  </div>
+                </div>
+              {%- endfor %}
+              {%- endif %}
+              {%- if tools %}
+              <h4>Agent Tools <small style="font-weight:400;text-transform:none;color:var(--muted)">(from agent manifest)</small></h4>
+              <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px">
+              {%- for cap in tools %}
+                {%- set cap_name = cap.name | default('Unknown') %}
+                {%- if cap_name == 'GraphicArt' %}{%- set cap_color = '#ea580c' %}
+                {%- elif cap_name == 'CodeInterpreter' %}{%- set cap_color = '#0891b2' %}
+                {%- else %}{%- set cap_color = '#6b7280' %}{%- endif %}
+                <span class="badge" style="background:{{ cap_color }}">{{ cap_name }}</span>
+              {%- endfor %}
+              </div>
+              {%- endif %}
+              {%- endif %}
             </div>
           </td>
         </tr>
@@ -487,6 +609,8 @@ function applyFilters() {
   const origin = document.getElementById('filterOrigin').value;
   const risk   = document.getElementById('filterRisk').value;
   const scope  = document.getElementById('filterScope').value;
+  const selectedCaps = Array.from(document.querySelectorAll('#capMenu input[type=checkbox]:checked')).map(cb => cb.value);
+  updateCapCount();
 
   let visible = 0;
   document.querySelectorAll('tr.agent-row').forEach(row => {
@@ -494,7 +618,9 @@ function applyFilters() {
     const matchOrigin= !origin || row.dataset.origin === origin;
     const matchRisk  = !risk   || row.dataset.risk   === risk;
     const matchScope = !scope  || row.dataset.scope  === scope;
-    const show = matchText && matchOrigin && matchRisk && matchScope;
+    const rowCaps    = (row.dataset.capability || '').split(',').filter(Boolean);
+    const matchCap   = selectedCaps.length === 0 || selectedCaps.some(sel => rowCaps.some(c => c.includes(sel)));
+    const show = matchText && matchOrigin && matchRisk && matchScope && matchCap;
 
     row.style.display = show ? '' : 'none';
     const detail = document.getElementById('detail-' + row.dataset.id);
@@ -504,6 +630,48 @@ function applyFilters() {
 
   const noResults = document.querySelector('.no-results-row');
   if (noResults) noResults.style.display = visible === 0 ? '' : 'none';
+}
+
+/* ──────────────────────────────────────
+   Capability dropdown
+────────────────────────────────────── */
+function toggleCapDropdown() {
+  const menu = document.getElementById('capMenu');
+  const btn  = document.getElementById('capDropdownBtn');
+  const isOpen = menu.style.display !== 'none';
+  menu.style.display = isOpen ? 'none' : '';
+  btn.classList.toggle('active', !isOpen);
+}
+
+document.addEventListener('click', function(e) {
+  const dd = document.getElementById('capDropdown');
+  if (dd && !dd.contains(e.target)) {
+    document.getElementById('capMenu').style.display = 'none';
+    document.getElementById('capDropdownBtn').classList.remove('active');
+  }
+});
+
+function updateCapCount() {
+  const n  = document.querySelectorAll('#capMenu input[type=checkbox]:checked').length;
+  const el = document.getElementById('capCount');
+  el.textContent = n > 0 ? n : '';
+  el.style.display = n > 0 ? '' : 'none';
+}
+
+function resetCapFilter() {
+  document.querySelectorAll('#capMenu input[type=checkbox]').forEach(cb => cb.checked = false);
+  updateCapCount();
+  applyFilters();
+}
+
+function resetFilters() {
+  document.getElementById('filterText').value   = '';
+  document.getElementById('filterOrigin').value = '';
+  document.getElementById('filterRisk').value   = '';
+  document.getElementById('filterScope').value  = '';
+  document.querySelectorAll('#capMenu input[type=checkbox]').forEach(cb => cb.checked = false);
+  updateCapCount();
+  applyFilters();
 }
 
 /* ──────────────────────────────────────

@@ -53,6 +53,7 @@ class AgentOrigin(str, Enum):
     PRO_CODE = "pro_code"
     AGENT_BUILDER = "agent_builder"
     COPILOT_STUDIO = "copilot_studio"
+    THIRD_PARTY = "third_party"
     UNKNOWN = "unknown"
 
 
@@ -107,6 +108,17 @@ class Agent:
     version: str | None
     last_modified_datetime: datetime | None
 
+    # Optional fields — populated when available from Graph detail endpoint
+    creator_upn: str | None = field(default=None)
+    platform: str | None = field(default=None)
+    short_description: str | None = field(default=None)
+    long_description: str | None = field(default=None)
+    # Parsed from elementDetails.elements[].definition
+    graph_capabilities: list[dict[str, Any]] = field(default_factory=list)
+    graph_instructions: str | None = field(default=None)
+    graph_actions: list[dict[str, Any]] = field(default_factory=list)
+    graph_conversation_starters: list[dict[str, Any]] = field(default_factory=list)
+
     # Populated after Purview enrichment
     purview_last_interaction: datetime | None = field(default=None)
     purview_top_knowledge_sources: list[KnowledgeSource] = field(default_factory=list)
@@ -147,6 +159,9 @@ class Agent:
             supported_hosts=payload.get("supportedHosts") or [],
             version=payload.get("version"),
             last_modified_datetime=last_modified,
+            platform=payload.get("platform"),
+            short_description=payload.get("shortDescription"),
+            long_description=payload.get("longDescription"),
             _raw=payload,
         )
 
@@ -156,7 +171,10 @@ class Agent:
     @property
     def is_org_scoped(self) -> bool:
         """True when the agent is available tenant-wide (not just to one user)."""
-        return any((a.get("type") or "").lower() == "organization" for a in self.available_to)
+        return any(
+            isinstance(a, dict) and (a.get("type") or "").lower() == "organization"
+            for a in self.available_to
+        )
 
     @property
     def days_since_modified(self) -> int | None:

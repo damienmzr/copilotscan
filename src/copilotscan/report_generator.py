@@ -50,6 +50,7 @@ ORIGIN_BADGE_COLOR: dict[str, str] = {
     AgentOrigin.SHAREPOINT_AGENT.value: "#dc2626",
     AgentOrigin.COPILOT_STUDIO.value: "#ea580c",
     AgentOrigin.PRO_CODE.value: "#ea580c",
+    AgentOrigin.THIRD_PARTY.value: "#2563eb",
     AgentOrigin.MICROSOFT_PREBUILT.value: "#16a34a",
     AgentOrigin.UNKNOWN.value: "#6b7280",
 }
@@ -200,7 +201,13 @@ class ReportGenerator:
             else "—"
         )
 
-        publisher_name = (agent.publisher or {}).get("displayName") or "—"
+        _pub = agent.publisher
+        if isinstance(_pub, dict):
+            publisher_name = _pub.get("displayName") or "—"
+        elif isinstance(_pub, str):
+            publisher_name = _pub or "—"
+        else:
+            publisher_name = "—"
 
         flags = [
             {
@@ -232,4 +239,12 @@ class ReportGenerator:
             "worst_color": RISK_BADGE_COLOR.get(worst_level, "#16a34a"),
             "flags": flags,
             "knowledge_sources": agent.purview_top_knowledge_sources,
+            "platform": agent.platform or "—",
+            "creator_upn": agent.creator_upn or "—",
+            "short_description": agent.short_description or "—",
+            "long_description": agent.long_description or "—",
+            "graph_capabilities": agent.graph_capabilities,
+            "graph_instructions": agent.graph_instructions or "",
+            "graph_actions": agent.graph_actions,
+            "graph_conversation_starters": agent.graph_conversation_starters,
         }

@@ -73,6 +73,7 @@ class GraphCollector:
         self._auth_header = authorization_header
         self._session = session or requests.Session()
         self._page_size = page_size
+        self._upn_cache: dict[str, str] = {}  # userId → userPrincipalName
 
     # ------------------------------------------------------------------
     # Public API
@@ -193,14 +194,110 @@ class GraphCollector:
         """Run preflight checks then fetch *all* agents, handling pagination automatically."""
         self.preflight()
         agents: list[Agent] = []
+        skipped = 0
+        _debug_detail_done = False
         for page in self._paginate():
             for item in page:
+                # Only collect entries that are surfaced in Microsoft Copilot.
+                # This matches the "Agents" view in the Microsoft 365 admin center.
+                supported_hosts = {h.lower() for h in (item.get("supportedHosts") or [])}
+                if "copilot" not in supported_hosts:
+                    skipped += 1
+                    continue
                 try:
-                    agents.append(Agent.from_graph_payload(item))
+                    agent = Agent.from_graph_payload(item)
+                    # Resolve creator UPN from publisher userId
+                    pub = item.get("publisher")
+                    if isinstance(pub, dict):
+                        upn = pub.get("userPrincipalName")
+                        if not upn:
+                            user_id = pub.get("userId") or pub.get("id")
+                            if user_id:
+                                upn = self._resolve_upn(user_id)
+                        agent.creator_upn = upn or None
+                    # For tenant-built agents, fetch the full detail to get capabilities
+                    if item.get("type") == "shared":
+                        self._enrich_from_element_details(agent)
+                    agents.append(agent)
                 except Exception as exc:
                     logger.warning("Skipping malformed agent payload: %s", exc)
+        if skipped:
+            logger.info(
+                "GraphCollector: skipped %d non-Copilot entries (Add-ins, Tabs, Bots, etc.)",
+                skipped,
+            )
         logger.info("GraphCollector: collected %d agents", len(agents))
         return agents
+
+    def _resolve_upn(self, user_id: str) -> str | None:
+        """Resolve a userId to its userPrincipalName via Graph /v1.0/users/{id}."""
+        if user_id in self._upn_cache:
+            return self._upn_cache[user_id]
+        try:
+            resp = self._session.get(
+                f"https://graph.microsoft.com/v1.0/users/{user_id}",
+                params={"$select": "userPrincipalName"},
+                headers={"Authorization": self._auth_header, "Accept": "application/json"},
+                timeout=10,
+            )
+            if resp.ok:
+                upn = resp.json().get("userPrincipalName")
+                if upn:
+                    self._upn_cache[user_id] = upn
+                    return upn
+        except Exception as exc:
+            logger.debug("Could not resolve UPN for userId %s: %s", user_id, exc)
+        return None
+
+    def _enrich_from_element_details(self, agent: Agent) -> None:
+        """
+        Fetch the per-agent detail endpoint and populate manifest-derived fields:
+        graph_capabilities, graph_instructions, graph_actions, graph_conversation_starters.
+        """
+        import json as _json
+        try:
+            data = self._get_with_retry(f"{self.BASE_URL}/{agent.id}")
+            # Overwrite richer fields when present in the detail response
+            if data.get("platform") and not agent.platform:
+                agent.platform = data["platform"]
+            if data.get("shortDescription") and not agent.short_description:
+                agent.short_description = data["shortDescription"]
+            if data.get("longDescription") and not agent.long_description:
+                agent.long_description = data["longDescription"]
+            for ed in data.get("elementDetails") or []:
+                for elem in ed.get("elements") or []:
+                    defn_str = elem.get("definition")
+                    if defn_str:
+                        try:
+                            defn = _json.loads(defn_str)
+                            agent.graph_capabilities = defn.get("capabilities") or []
+                            agent.graph_instructions = defn.get("instructions")
+                            agent.graph_actions = defn.get("actions") or []
+                            agent.graph_conversation_starters = defn.get("conversation_starters") or []
+                        except (ValueError, TypeError):
+                            pass
+        except Exception as exc:
+            logger.warning("Could not fetch element details for agent %s: %s", agent.id, exc)
+
+    def _fetch_element_capabilities(self, pkg_id: str) -> list[dict]:
+        """Deprecated: use _enrich_from_element_details instead."""
+        import json as _json
+        try:
+            data = self._get_with_retry(f"{self.BASE_URL}/{pkg_id}")
+            caps: list[dict] = []
+            for ed in data.get("elementDetails") or []:
+                for elem in ed.get("elements") or []:
+                    defn_str = elem.get("definition")
+                    if defn_str:
+                        try:
+                            defn = _json.loads(defn_str)
+                            caps.extend(defn.get("capabilities") or [])
+                        except (ValueError, TypeError):
+                            pass
+            return caps
+        except Exception as exc:
+            logger.warning("Could not fetch capabilities for agent %s: %s", pkg_id, exc)
+            return []
 
     # ------------------------------------------------------------------
     # Internal helpers

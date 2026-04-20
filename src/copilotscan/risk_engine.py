@@ -64,23 +64,44 @@ def classify_origin(agent: Agent) -> AgentOrigin:
       6. fallback                                      → UNKNOWN
     """
     elem = [e.lower() for e in agent.element_types]
-    publisher_name: str = ((agent.publisher or {}).get("displayName") or "").lower()
+    _pub = agent.publisher
+    if isinstance(_pub, dict):
+        publisher_name: str = (_pub.get("displayName") or "").lower()
+    elif isinstance(_pub, str):
+        publisher_name = _pub.lower()
+    else:
+        publisher_name = ""
 
     if "sharepointagent" in elem:
         return AgentOrigin.SHAREPOINT_AGENT
 
-    if publisher_name == "microsoft":
+    if publisher_name.startswith("microsoft") or agent.agent_type == "firstParty":
         return AgentOrigin.MICROSOFT_PREBUILT
 
-    if "customenginagent" in elem or "customengineeragent" in elem:
+    # Marketplace / ISV apps always have agent_type == "thirdParty"
+    if agent.agent_type == "thirdParty":
+        if "customengincopilots" in elem or "customengineecopilots" in elem or \
+                "customenginagent" in elem or "customengineeragent" in elem:
+            return AgentOrigin.PRO_CODE
+        return AgentOrigin.THIRD_PARTY
+
+    # Agents created within the tenant (type == "shared")
+    platform = (agent.platform or "").lower()
+
+    # SharePoint-page created agents
+    if platform == "sharepoint":
+        return AgentOrigin.SHAREPOINT_AGENT
+
+    if "customengincopilots" in elem or "customengineecopilots" in elem or \
+            "customenginagent" in elem or "customengineeragent" in elem:
         return AgentOrigin.PRO_CODE
 
-    if "declarativeagent" in elem:
-        # Individual scope → built by a user in Agent Builder (Copilot Studio personal)
-        if not agent.is_org_scoped:
+    if "declarativecopilots" in elem or "declarativeagent" in elem:
+        if "agent builder" in platform:
             return AgentOrigin.AGENT_BUILDER
-        # Org / team scope → deployed via Copilot Studio
-        return AgentOrigin.COPILOT_STUDIO
+        if agent.is_org_scoped:
+            return AgentOrigin.COPILOT_STUDIO
+        return AgentOrigin.AGENT_BUILDER
 
     return AgentOrigin.UNKNOWN
 
@@ -168,6 +189,21 @@ def _rule_sensitive_knowledge(agent: Agent) -> RiskFlag | None:
 def _rule_knowledge_unknown(agent: Agent) -> RiskFlag | None:
     """Rule 4 — KNOWLEDGE_UNKNOWN: no Purview data available at all."""
     if agent.purview_last_interaction is None and not agent.purview_top_knowledge_sources:
+        if agent.graph_capabilities:
+            # Capabilities are defined in the manifest but activity cannot be audited via Purview
+            return RiskFlag(
+                rule_id="KNOWLEDGE_UNKNOWN",
+                level=RiskLevel.INFO,
+                message_en=(
+                    "Knowledge sources are defined in the agent manifest "
+                    "(see Capabilities below) but Purview audit data is unavailable."
+                ),
+                message_fr=(
+                    "Les sources de connaissances sont définies dans le manifeste de l'agent "
+                    "(voir Capacités ci-dessous) mais les données d'audit Purview ne sont pas disponibles."
+                ),
+                data_source="graph",
+            )
         return RiskFlag(
             rule_id="KNOWLEDGE_UNKNOWN",
             level=RiskLevel.LOW,
@@ -186,7 +222,7 @@ def _rule_knowledge_unknown(agent: Agent) -> RiskFlag | None:
 
 def _rule_agent_not_audited(agent: Agent, origin: AgentOrigin) -> RiskFlag | None:
     """Rule 5 — AGENT_NOT_AUDITED: origin types that do not emit audit records."""
-    if origin in (AgentOrigin.MICROSOFT_PREBUILT, AgentOrigin.SHAREPOINT_AGENT):
+    if origin in (AgentOrigin.MICROSOFT_PREBUILT, AgentOrigin.SHAREPOINT_AGENT, AgentOrigin.THIRD_PARTY):
         return RiskFlag(
             rule_id="AGENT_NOT_AUDITED",
             level=RiskLevel.INFO,
@@ -208,6 +244,7 @@ _ORIGIN_RISK_LEVEL: dict[AgentOrigin, RiskLevel] = {
     AgentOrigin.SHAREPOINT_AGENT: RiskLevel.HIGH,
     AgentOrigin.COPILOT_STUDIO: RiskLevel.MEDIUM,
     AgentOrigin.PRO_CODE: RiskLevel.MEDIUM,
+    AgentOrigin.THIRD_PARTY: RiskLevel.LOW,
     AgentOrigin.MICROSOFT_PREBUILT: RiskLevel.INFO,
     AgentOrigin.UNKNOWN: RiskLevel.LOW,
 }
@@ -217,6 +254,7 @@ _ORIGIN_RISK_MSG_EN: dict[AgentOrigin, str] = {
     AgentOrigin.SHAREPOINT_AGENT: "Agent is a SharePoint-native agent — audit coverage is limited.",
     AgentOrigin.COPILOT_STUDIO: "Agent was deployed via Copilot Studio — verify governance approval.",
     AgentOrigin.PRO_CODE: "Agent is a custom-engine (pro-code) agent — code review recommended.",
+    AgentOrigin.THIRD_PARTY: "Agent is a third-party commercial app published in the Microsoft marketplace.",
     AgentOrigin.MICROSOFT_PREBUILT: "Agent is a Microsoft prebuilt agent — low risk.",
     AgentOrigin.UNKNOWN: "Agent origin could not be determined from available metadata.",
 }
@@ -226,6 +264,7 @@ _ORIGIN_RISK_MSG_FR: dict[AgentOrigin, str] = {
     AgentOrigin.SHAREPOINT_AGENT: "L'agent est natif SharePoint — la couverture d'audit est limitée.",
     AgentOrigin.COPILOT_STUDIO: "L'agent a été déployé via Copilot Studio — vérifiez l'approbation de gouvernance.",
     AgentOrigin.PRO_CODE: "L'agent est un agent custom-engine (pro-code) — une revue de code est recommandée.",
+    AgentOrigin.THIRD_PARTY: "L'agent est une application tierce commerciale publiée dans le marketplace Microsoft.",
     AgentOrigin.MICROSOFT_PREBUILT: "L'agent est un agent Microsoft préintégré — risque faible.",
     AgentOrigin.UNKNOWN: "L'origine de l'agent n'a pas pu être déterminée à partir des métadonnées disponibles.",
 }
